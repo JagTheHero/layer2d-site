@@ -144,12 +144,12 @@
 
           <section id="obs">
             <h2>OBS Browser Source</h2>
-            <p>Add a <strong>Browser</strong> source in OBS and point it at the player with <code>?obs=1</code>. OBS mode renders on a transparent background and hides the interface.</p>
-            <pre class="code"><code><span class="ln"><span class="tok-s">https://layer2d.com/player/?model=test-signal.l2d&amp;obs=1&amp;mic=1</span></span></code></pre>
+            <p>Add a <strong>Browser</strong> source in OBS and point it at the player with <code>?obs=1</code>. OBS mode renders on a transparent background with premultiplied alpha (no green screen needed) and hides the interface.</p>
+            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Recommended (zero self-hosting, no OBS flags, works with private local .l2d files):</span><span class="ln"><span class="tok-p">#</span> 1. Open https://layer2d.com/player/ in Chrome/Edge, drop your .l2d, enable Mic &amp; Cam</span><span class="ln"><span class="tok-p">#</span> 2. Click "OBS Link" — paste the copied URL into an OBS Browser Source:</span><span class="ln"><span class="tok-s">https://layer2d.com/player/?obs=1&amp;link=l2d-xxxxxxxxxxxx</span></span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> Or point directly at a hosted .l2d URL:</span><span class="ln"><span class="tok-s">https://layer2d.com/player/?model=test-signal.l2d&amp;obs=1</span></span></code></pre>
             <ul>
+              <li><strong>OBS Link (P2P):</strong> Because OBS's embedded Browser Source blocks webcam/mic permissions and OS file drag-and-drop by default, clicking <strong>OBS Link</strong> in your regular browser streams your <code>.l2d</code> once directly peer-to-peer (cached locally in OBS's IndexedDB, never uploaded to any server) and mirrors live webcam tracking, mic lip-sync, expressions, outfits, and poses into OBS at 60 fps with true transparent alpha.</li>
               <li>Set width and height to match your canvas, for example <code>1080 × 1920</code>.</li>
-              <li>Enable <strong>Control audio via OBS</strong> only if you want OBS to own the microphone.</li>
-              <li>Use <strong>Interact</strong> on the source to grant webcam or microphone permission once.</li>
+              <li>Prefer Window Capture instead? Click <strong>BG: Green</strong> in the browser player for a pure <code>#00ff00</code> chroma-key backdrop.</li>
             </ul>
           </section>
 
@@ -159,9 +159,12 @@
               <table>
                 <thead><tr><th>Parameter</th><th>Effect</th></tr></thead>
                 <tbody>
-                  <tr><td><code>model=&lt;url&gt;</code></td><td>Load a <code>.l2d</code> archive or unpacked <code>pack.json</code>.</td></tr>
+                  <tr><td><code>link=&lt;id&gt;</code></td><td>Connect this OBS Browser Source to a browser tab running <strong>OBS Link</strong> (receives <code>.l2d</code> + live 60 fps tracking P2P).</td></tr>
+                  <tr><td><code>model=&lt;url&gt;</code></td><td>Load a hosted <code>.l2d</code> archive or unpacked <code>pack.json</code> (overrides saved local avatar).</td></tr>
+                  <tr><td><code>slot=&lt;name&gt;</code></td><td>Named IndexedDB storage slot for locally saved <code>.l2d</code> avatars (default: <code>default</code>).</td></tr>
+                  <tr><td><code>saved=0</code></td><td>Ignore any locally saved IndexedDB avatar and load the default model.</td></tr>
                   <tr><td><code>obs=1</code></td><td>Transparent background, interface hidden.</td></tr>
-                  <tr><td><code>bg=transparent</code></td><td>Same as <code>obs=1</code>.</td></tr>
+                  <tr><td><code>bg=light|dark|green|transparent</code></td><td>Set initial backdrop color (<code>transparent</code> enables OBS mode).</td></tr>
                   <tr><td><code>mic=1</code></td><td>Start microphone lip sync on load.</td></tr>
                   <tr><td><code>cam=1</code></td><td>Start webcam tracking on load.</td></tr>
                   <tr><td><code>auto=0</code></td><td>Disable idle animation.</td></tr>

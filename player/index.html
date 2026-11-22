@@ -61,7 +61,10 @@ button[aria-pressed="true"] { background: var(--accent); border-color: var(--acc
 <div id="bar">
   <div class="group" role="group" aria-label="Model">
     <span class="label">Model</span>
-    <button id="open-l2d" title="Open a .l2d avatar bundle">Open .l2d</button>
+    <button id="open-l2d" title="Open a local .l2d avatar (saved locally in this browser; Ctrl+O)">Open .l2d</button>
+    <button id="clear-l2d" hidden title="Forget the locally saved .l2d avatar in this slot">Clear saved</button>
+    <button id="obs-link" aria-pressed="false" title="Start P2P OBS Link — stream your .l2d, webcam, mic &amp; controls straight into a transparent OBS Browser Source (no server or OBS flags needed)">OBS Link</button>
+    <button id="copy-obs" hidden title="Copy the OBS Browser Source URL for this link">Copy URL</button>
     <input id="l2d-file" type="file" accept=".l2d,.zip" hidden>
   </div>
   <div class="group" role="group" aria-label="View">
@@ -117,8 +120,69 @@ button[aria-pressed="true"] { background: var(--accent); border-color: var(--acc
 "use strict";
 const QP = new URLSearchParams(location.search);
 const OBS_MODE = QP.get("obs") === "1" || QP.get("obs") === "true" || QP.get("bg") === "transparent";
+const LINK_ID = (QP.get("link") || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48);
+const MODEL_SLOT = (QP.get("slot") || (LINK_ID ? `link-${LINK_ID}` : "default")).slice(0, 64);
 if (OBS_MODE) document.documentElement.classList.add("obs");
-let bgMode = OBS_MODE ? "transparent" : "light";
+
+// ---- local IndexedDB persistence for dropped/opened & OBS-synced .l2d bundles --------------------------------------
+const IDB_NAME = "layer2d-player", IDB_STORE = "models";
+let currentL2D = { buf: null, name: null, hash: null };
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") return reject(new Error("IndexedDB unavailable"));
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error("IndexedDB open failed"));
+  });
+}
+async function idbLoadModel(slot = MODEL_SLOT) {
+  try {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(slot);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => db.close();
+    });
+  } catch { return null; }
+}
+async function idbSaveModel(name, buffer, slot = MODEL_SLOT, hash = null) {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put({ name, hash, buffer, savedAt: Date.now() }, slot);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+    return true;
+  } catch { return false; }
+}
+async function idbClearModel(slot = MODEL_SLOT) {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(slot);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+    return true;
+  } catch { return false; }
+}
+function updateSavedUi(savedName) {
+  const btn = $("clear-l2d");
+  if (!btn) return;
+  btn.hidden = !savedName;
+  if (savedName) btn.title = `Forget locally saved ${savedName} (slot: ${MODEL_SLOT})`;
+}
+const REQ_BG = (QP.get("bg") || "").toLowerCase();
+let bgMode = OBS_MODE ? "transparent" : (["light", "dark", "green", "transparent"].includes(REQ_BG) ? REQ_BG : "light");
 const DEFAULT_VOWELS = { A: "M04", I: "M05", U: "M06", E: "M07", O: "M08" };
 let HL_IDS = new Set();
 function pitchGroup(id) {
@@ -1098,7 +1162,8 @@ const ctl = { auto: true, autoT0: 0, a: 0, aTarget: 0, pitch: 0, pitchTarget: 0,
               head: 1, headT: 0,
               arms: { R: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 }, L: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 } } };
 const mic = { on: false, ctx: null, stream: null, analyser: null, freq: null, time: null, rms: 0, open: false, vowel: null, cand: null, candN: 0, holdUntil: 0 };
-const cam = { on: false, loading: false, landmarker: null, stream: null, video: null, lastVideoT: -1, eyeOpen: [1, 1], gaze: [0, 0], vowel: null, cand: null, candN: 0 };
+const cam = { on: false, remoteOn: false, loading: false, landmarker: null, stream: null, video: null, lastVideoT: -1, eyeOpen: [1, 1], gaze: [0, 0], vowel: null, cand: null, candN: 0 };
+const camActive = () => cam.on || cam.remoteOn;
 let statusMsg = "", statusUntil = 0;
 function flashStatus(msg, secs = 2.5) {
   statusMsg = msg; statusUntil = performance.now() / 1000 + secs;
@@ -1138,7 +1203,7 @@ function drive(t) {
   }
   for (const k of [0, 1, 2]) bounce += depth * Math.exp(-(((t - ctl.bounceAt - k * 0.5) / half) ** 2));
   const tau = 2 * Math.PI * t;              // and she never holds quite still: a slow drift of the head's turn and tilt
-  if (!cam.on) {
+  if (!camActive()) {
     a += 0.035 * Math.sin(tau / 7.3) + 0.02 * Math.sin(tau / 4.1 + 1.0);
     roll += (1.2 * Math.sin(tau / 6.1 + 0.5) + 0.7 * Math.sin(tau / 3.7)) * Math.PI / 180;
     if (!ctl.auto) pitch += 0.03 * Math.sin(tau / 6.7 + 0.8) + 0.015 * Math.sin(tau / 3.9);
@@ -1216,10 +1281,10 @@ function springLen(n) { return M().earrings[n] ? M().earrings[n].length : (n ===
 
 function simStep(t, dt) {
   if (!ctl.auto) {           // the hand-driven head eases toward the pointer, the torso follows a beat late
-    const kh = cam.on ? 10 : 7;
+    const kh = camActive() ? 10 : 7;
     ctl.a += (ctl.aTarget - ctl.a) * Math.min(1, kh * dt);
     ctl.pitch += (ctl.pitchTarget - ctl.pitch) * Math.min(1, kh * dt);
-    ctl.roll += (ctl.rollTarget - ctl.roll) * Math.min(1, (cam.on ? 8 : 5) * dt);
+    ctl.roll += (ctl.rollTarget - ctl.roll) * Math.min(1, (camActive() ? 8 : 5) * dt);
     ctl.body += (follow(ctl.a) - ctl.body) * Math.min(1, 2.5 * dt);
   }
   const m_a_now = ctl.auto ? keyed(M().timeline.a, (t - ctl.autoT0) % M().dur) : ctl.a;
@@ -1456,7 +1521,7 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
   let add = [...(F.add || [])];
   if (t >= face.next) { face.from = face.next; face.next = face.from + 2.2 + 3.5 * Math.random(); }
   let shut = false;
-  if (!snap && !cam.on && t - face.from < 0.12 && X.blink && Array.isArray(X.blink.hide) && !hide.has("E05R") && !hide.has("E05L")) {
+  if (!snap && !camActive() && t - face.from < 0.12 && X.blink && Array.isArray(X.blink.hide) && !hide.has("E05R") && !hide.has("E05L")) {
     const drop = new Set(X.blink.drop || []);
     add = add.filter((p) => !drop.has(X.pieces[p].base)).concat(X.blink.add || []);
     for (const h of X.blink.hide) hide.add(h);
@@ -1481,8 +1546,8 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
     gaze.next = t + 0.7 + 2.5 * Math.random();
   }
   const kg = Math.min(1, 25 * Math.max(0, t - face.t)), still = snap || F.stare, lk = F.look;   // look (opt-in): a
-  const gTx = lk ? lk[0] : (!snap && cam.on) ? cam.gaze[0] : still ? 0 : gaze.tx;
-  const gTy = lk ? lk[1] : (!snap && cam.on) ? cam.gaze[1] : still ? 0 : gaze.ty;
+  const gTx = lk ? lk[0] : (!snap && camActive()) ? cam.gaze[0] : still ? 0 : gaze.tx;
+  const gTy = lk ? lk[1] : (!snap && camActive()) ? cam.gaze[1] : still ? 0 : gaze.ty;
   gaze.x += (gTx - gaze.x) * kg;                                                                // face's own glance
   gaze.y += (gTy - gaze.y) * kg;
   const want = F.move || {}, move = {}, k = snap ? 1 : Math.min(1, 14 * Math.max(0, t - face.t));
@@ -1492,8 +1557,8 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
     move[id] = face.brow[id] = c.map((v, j) => v + (g[j] - v) * k);
   }
   const eo = F.eyes || [1, 1], ek = F.iris || 1;
-  const eg = [!snap && cam.on ? eo[0] * cam.eyeOpen[0] : eo[0], !snap && cam.on ? eo[1] * cam.eyeOpen[1] : eo[1], ek, ek];
-  face.eye = face.eye.map((v, j) => v + (eg[j] - v) * (cam.on && !snap ? Math.min(1, k * 2.5) : k));
+  const eg = [!snap && camActive() ? eo[0] * cam.eyeOpen[0] : eo[0], !snap && camActive() ? eo[1] * cam.eyeOpen[1] : eo[1], ek, ek];
+  face.eye = face.eye.map((v, j) => v + (eg[j] - v) * (camActive() && !snap ? Math.min(1, k * 2.5) : k));
   return { hide, after, move, eyes: face.eye.slice(), gaze: snap ? lk || [0, 0] : [gaze.x, gaze.y], still: Hd ? Hd.still : [], shut,
            over: (Hd && Hd.over) || {} };
 }
@@ -2073,6 +2138,7 @@ function draw(f) {
   // pixels put in among the layers where it is: behind her, under her shirt, over her front, over her face
   const armAt = (id, when) => { if (arm3d && ARM.at(id, when, vw)) gl.useProgram(prog); };
   const bg = bgMode === "transparent" ? [0, 0, 0, 0]
+           : bgMode === "green" ? [0, 1, 0, 1]
            : bgMode === "dark" ? [0.09, 0.08, 0.12, 1]
            : SKY && SKY.night ? [...SKY.bg, 1] : [...P.bg, 1];
   gl.clearColor(bg[0], bg[1], bg[2], bg[3]); gl.clear(gl.COLOR_BUFFER_BIT);
@@ -2230,9 +2296,10 @@ function loadAssetImage(path) {
   const url = URL.createObjectURL(new Blob([data], { type: mime }));
   return loadImage(url).finally(() => URL.revokeObjectURL(url));
 }
-async function loadPackData(l2dBuffer = null) {
+async function loadPackData(l2dBuffer = null, l2dName = null) {
   L2D_FILES = null;
   if (l2dBuffer) {
+    const rawCopy = l2dBuffer.slice(0);
     L2D_FILES = await parseL2DArchive(l2dBuffer);
     const dec = new TextDecoder("utf-8");
     const manifestRaw = L2D_FILES["layer2d.json"];
@@ -2254,34 +2321,53 @@ async function loadPackData(l2dBuffer = null) {
     }));
     const entry = manifest.entry || "pack.json";
     if (!L2D_FILES[entry]) throw new Error(`.l2d archive missing ${entry}`);
+    const archiveHash = await sha256Hex(new Uint8Array(rawCopy));
+    currentL2D = { buf: rawCopy, name: l2dName || `${manifest.id || manifest.name || "avatar"}.l2d`, hash: archiveHash };
     return JSON.parse(dec.decode(L2D_FILES[entry]));
   }
+  currentL2D = { buf: null, name: null, hash: null };
   const modelUrl = QP.get("model");
   if (modelUrl && /\.l2d(\?|$|#)/i.test(modelUrl)) {
     const resp = await fetch(modelUrl);
-    if (resp.ok) return loadPackData(await resp.arrayBuffer());
+    if (resp.ok) return loadPackData(await resp.arrayBuffer(), modelUrl.split("/").pop().split("?")[0]);
     if (/demo\.l2d/i.test(modelUrl)) {
       const fb = await fetch("test-signal.l2d");
-      if (fb.ok) return loadPackData(await fb.arrayBuffer());
+      if (fb.ok) return loadPackData(await fb.arrayBuffer(), "test-signal.l2d");
     }
   } else if (modelUrl && /\.json(\?|$|#)/i.test(modelUrl)) {
     const resp = await fetch(modelUrl);
     if (resp.ok) return resp.json();
   }
+  if (!modelUrl && QP.get("saved") !== "0") {
+    const saved = await idbLoadModel(MODEL_SLOT);
+    if (saved && saved.buffer) {
+      try {
+        const pack = await loadPackData(saved.buffer.slice(0), saved.name || "saved.l2d");
+        updateSavedUi(saved.name || "saved.l2d");
+        flashStatus(`restored ${saved.name || "saved avatar"}`);
+        return pack;
+      } catch (e) {
+        console.warn("Clearing invalid saved .l2d from IndexedDB:", e);
+        await idbClearModel(MODEL_SLOT);
+        updateSavedUi(null);
+      }
+    }
+  }
+  updateSavedUi(null);
   const resp = await fetch("pack.json");
   if (resp.ok) return resp.json();
   for (const fbUrl of ["test-signal.l2d", "../models/test-signal/test-signal.l2d"]) {
     const fb = await fetch(fbUrl);
-    if (fb.ok) return loadPackData(await fb.arrayBuffer());
+    if (fb.ok) return loadPackData(await fb.arrayBuffer(), fbUrl.split("/").pop());
   }
   throw new Error(`HTTP ${resp.status} loading pack.json`);
 }
 
 // ---- start ----------------------------------------------------------------------------------------------------------
-async function start(l2dBuffer = null) {
+async function start(l2dBuffer = null, l2dName = null) {
   gl = $("gl").getContext("webgl2", { premultipliedAlpha: true, alpha: true, antialias: false, preserveDrawingBuffer: true });
   if (!gl) return fail("This browser has no WebGL 2, which the live rig needs.");
-  P = await loadPackData(l2dBuffer);
+  P = await loadPackData(l2dBuffer, l2dName);
   if (P.title) document.title = P.title;
   HL_IDS = new Set(Array.isArray(P.highlightIds) ? P.highlightIds : []);
   if (P.views) Object.assign(VIEWS, P.views);        // (opt-in: an avatar's own framing)
@@ -2293,16 +2379,18 @@ async function start(l2dBuffer = null) {
     P.layers.splice(i, 0, L); P.samples.forEach((s, k) => s.layers.splice(i, 0, st.samples[k][j]));
   });
   for (const L of P.layers) if (L.kind === 0 && L.head) L.pitchGroup = pitchGroup(L.id);
-  prog = gl.createProgram();
-  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
-  gl.bindAttribLocation(prog, 0, "aPos"); gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  const nU = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
-  for (let i = 0; i < nU; i++) { const info = gl.getActiveUniform(prog, i), name = info.name.replace(/\[0\]$/, ""); U[name] = gl.getUniformLocation(prog, name); }
-  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  if (!prog) {
+    prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+    gl.bindAttribLocation(prog, 0, "aPos"); gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    const nU = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < nU; i++) { const info = gl.getActiveUniform(prog, i), name = info.name.replace(/\[0\]$/, ""); U[name] = gl.getUniformLocation(prog, name); }
+    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  }
   if (P.arm3d && /[?&]arm3d\b/.test(location.search)) window.__arm3d = ARM = (await import("./arm3d.js")).create(gl, P, { VS, M, rotP, torsoFwd, headFwd, layerFwd, loadAssetBlob });
   const armFlag = (k) => ARM && ARM.on && new RegExp(`[?&]${k}\\b`).test(location.search);   // (opt-in: arm3d_*.js)
   if (armFlag("armpanel")) import("./arm3d_panel.js").then((m) => m.panel(ARM)).catch(console.warn);
@@ -2450,6 +2538,7 @@ async function start(l2dBuffer = null) {
   sizeTo(1, 1); resize();
   $("status").textContent = "";
   window.__ready = true;
+  paused = false;
   if (!globalListenersBound) {
     globalListenersBound = true;
     window.addEventListener("resize", resize);
@@ -2487,6 +2576,7 @@ function loop(now) {
   now /= 1000; if (t0 === null) { t0 = now; fpsT = now; }
   if (mic.on) updateMic(now);
   if (cam.on) updateCam();
+  if (obsHost.on && obsHost.conns.size) sendObsPose(now);
   const target = now - t0, dt = 1 / SUB;
   let steps = 0, m = null;
   while (simT < target && steps < SUB / 4) { m = simStep(simT, dt); simT += dt; steps++; }
@@ -2523,7 +2613,7 @@ function setAuto(on) {       // hand over without a jump: the manual pose starts
   ctl.auto = on; press($("auto"), on);
 }
 function setView(v) { view = v; press($("v-bust"), v === "bust"); press($("v-full"), v === "full"); }
-const BG_CYCLE = ["light", "dark", "transparent"], BG_LABELS = { light: "BG: Light", dark: "BG: Dark", transparent: "BG: Trans" };
+const BG_CYCLE = ["light", "dark", "green", "transparent"], BG_LABELS = { light: "BG: Light", dark: "BG: Dark", green: "BG: Green", transparent: "BG: Trans" };
 function setBg(mode) {
   bgMode = BG_CYCLE.includes(mode) ? mode : "light";
   const btn = $("bg-btn");
@@ -2804,21 +2894,42 @@ window.__rigApi = {
   },
 };
 
-// Open .l2d file picker & drag-and-drop loader
+// Open .l2d file picker, drag-and-drop loader, local IndexedDB persistence & P2P OBS Link
+function resetPlayerState() {
+  paused = true;
+  window.__ready = false;
+  for (const id of ["faces", "holds", "hairs", "eyecols", "styles", "outfits"]) {
+    const el = $(id);
+    if (el) el.querySelectorAll("button").forEach((b) => b.remove());
+  }
+  face.pick = null; hold.pick = null; hairPick = null; eyePick = null;
+  for (const k of Object.keys(wear)) delete wear[k];
+  if (gl) {
+    for (const m of [tex, holes, wipes, opens, sheers]) {
+      for (const v of Object.values(m)) if (v && v.tex) gl.deleteTexture(v.tex);
+    }
+    for (const v of Object.values(clipFbo)) {
+      if (v && v.tex) gl.deleteTexture(v.tex);
+      if (v && v.fb) gl.deleteFramebuffer(v.fb);
+    }
+    if (skirtTex) { gl.deleteTexture(skirtTex); skirtTex = null; }
+    if (chainTex) { gl.deleteTexture(chainTex); chainTex = null; }
+    if (lockTex) { gl.deleteTexture(lockTex); lockTex = null; }
+  }
+  tex = {}; holes = {}; wipes = {}; opens = {}; sheers = {}; clipFbo = {}; clipOrder = []; CH = []; sim = null; ARM = null; window.__arm3d = null;
+}
 async function loadDroppedL2D(file) {
   if (!file) return;
   try {
     $("err").hidden = true;
     $("status").textContent = `loading ${file.name}…`;
-    paused = true;
-    for (const id of ["faces", "holds", "hairs", "eyecols", "styles", "outfits"]) {
-      const el = $(id);
-      if (el) el.querySelectorAll("button").forEach((b) => b.remove());
-    }
-    tex = {}; holes = {}; wipes = {}; opens = {}; sheers = {}; clipFbo = {}; clipOrder = []; CH = []; sim = null; ARM = null; window.__arm3d = null;
-    paused = false;
-    await start(await file.arrayBuffer());
-    flashStatus(`loaded ${file.name}`);
+    const buf = await file.arrayBuffer();
+    resetPlayerState();
+    await start(buf.slice(0), file.name);
+    const saved = await idbSaveModel(file.name, buf, MODEL_SLOT, currentL2D.hash);
+    if (saved) updateSavedUi(file.name);
+    if (obsHost.on) obsBroadcastModel();
+    flashStatus(saved ? `loaded & saved ${file.name} locally` : `loaded ${file.name}`);
   } catch (e) {
     fail("Could not open .l2d bundle: " + e.message);
   }
@@ -2827,6 +2938,375 @@ if ($("open-l2d") && $("l2d-file")) {
   $("open-l2d").onclick = () => $("l2d-file").click();
   $("l2d-file").onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) loadDroppedL2D(f); e.target.value = ""; };
 }
+if ($("clear-l2d")) {
+  $("clear-l2d").onclick = async () => {
+    await idbClearModel(MODEL_SLOT);
+    updateSavedUi(null);
+    $("err").hidden = true;
+    resetPlayerState();
+    await start(null);
+    if (obsHost.on) obsBroadcastModel();
+    flashStatus("cleared locally saved avatar");
+  };
+}
+
+// ---- P2P WebRTC OBS Link (Chrome/browser controller <-> transparent OBS Browser Source) -----------------------------
+// Runs Mic, Cam, .l2d drag-and-drop & controls in a normal browser; streams .l2d once (cached in OBS IndexedDB)
+// and 60 fps tracking over direct peer-to-peer WebRTC DataChannel to OBS (zero self-hosting, zero OBS CLI flags!).
+const OBS_CHUNK_BYTES = 32768;
+const OBS_LINK_ID_KEY = "layer2d_obs_link_id";
+const OBS_LINK_ON_KEY = "layer2d_obs_link_on";
+const ICE_CFG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }] };
+let PeerCtor = null;
+async function loadPeerCtor() {
+  if (PeerCtor) return PeerCtor;
+  const mod = await import("https://esm.sh/peerjs@1.5.4");
+  PeerCtor = mod.Peer || mod.default;
+  if (!PeerCtor) throw new Error("PeerJS unavailable");
+  return PeerCtor;
+}
+function getOrCreateLinkId() {
+  try {
+    let id = localStorage.getItem(OBS_LINK_ID_KEY);
+    if (id && /^l2d-[a-z0-9]{8,24}$/i.test(id)) return id;
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    id = "l2d-" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(OBS_LINK_ID_KEY, id);
+    return id;
+  } catch {
+    return "l2d-" + Math.random().toString(16).slice(2, 14);
+  }
+}
+function getObsLinkUrl(id) {
+  const u = new URL(location.href);
+  u.search = "";
+  u.searchParams.set("obs", "1");
+  u.searchParams.set("link", id);
+  return u.toString();
+}
+const obsHost = { on: false, loading: false, id: null, peer: null, conns: new Set(), lastPoseT: 0, lastBounceSent: -10, bgTimer: null, txSeq: 0 };
+const obsViewer = { on: false, id: null, peer: null, conn: null, retryTimer: null, rx: null, posesRx: 0, applyingModel: false };
+window.__obsLinkState = () => ({
+  role: LINK_ID ? "viewer" : (obsHost.on ? "host" : "off"),
+  linkId: LINK_ID || obsHost.id || null,
+  hostOpen: Boolean(obsHost.peer && obsHost.peer.open),
+  conns: obsHost.conns.size,
+  viewerConnected: Boolean(obsViewer.conn && obsViewer.conn.open),
+  modelHash: currentL2D.hash,
+  modelName: currentL2D.name,
+  posesRx: obsViewer.posesRx,
+});
+function updateObsLinkUi() {
+  const btn = $("obs-link"), cp = $("copy-obs");
+  if (btn) {
+    press(btn, obsHost.on || obsHost.loading);
+    btn.textContent = obsHost.loading ? "OBS Link…" : (obsHost.on ? (obsHost.conns.size ? `OBS Link (${obsHost.conns.size})` : "OBS Link: ON") : "OBS Link");
+  }
+  if (cp) cp.hidden = !obsHost.on;
+}
+function makeHelloPayload() {
+  const txId = ++obsHost.txSeq;
+  const size = currentL2D.buf ? currentL2D.buf.byteLength : 0;
+  return { t: "hello", txId, name: currentL2D.name || "avatar.l2d", hash: currentL2D.hash || null, size, total: Math.ceil(size / OBS_CHUNK_BYTES) };
+}
+async function sendModelChunks(conn, txId) {
+  if (!currentL2D.buf || !conn.open) return;
+  const buf = currentL2D.buf, total = Math.ceil(buf.byteLength / OBS_CHUNK_BYTES);
+  conn.__txId = txId;
+  conn.__sendingModel = true;
+  try {
+    const dc = conn.dataChannel;
+    for (let seq = 0; seq < total; seq++) {
+      if (!conn.open || conn.__txId !== txId) return;
+      while (dc && dc.bufferedAmount > 262144) {
+        if (!conn.open || conn.__txId !== txId) return;
+        await new Promise((r) => setTimeout(r, 12));
+      }
+      const off = seq * OBS_CHUNK_BYTES;
+      const chunk = new Uint8Array(buf, off, Math.min(OBS_CHUNK_BYTES, buf.byteLength - off));
+      conn.send({ t: "mchunk", txId, seq, total, data: chunk });
+    }
+  } finally {
+    if (conn.__txId === txId) conn.__sendingModel = false;
+  }
+}
+function buildObsPose(now) {
+  const outfits = {};
+  for (const g of Object.keys((P && P.outfits) || {})) outfits[g] = wearAt(g, now) >= 0.5 ? 1 : 0;
+  const bounceTrig = ctl.bounceAt > obsHost.lastBounceSent ? 1 : 0;
+  if (bounceTrig) obsHost.lastBounceSent = ctl.bounceAt;
+  return {
+    t: "pose",
+    a: ctl.aTarget, pitch: ctl.pitchTarget, roll: ctl.rollTarget,
+    eyes: ctl.eyes,
+    eyeOpen: cam.on ? [cam.eyeOpen[0], cam.eyeOpen[1]] : null,
+    gaze: cam.on ? [cam.gaze[0], cam.gaze[1]] : null,
+    vowel: ctl.vowel,
+    auto: ctl.auto,
+    view,
+    face: face.pick,
+    hold: hold.pick,
+    hair: hairPick,
+    eye: eyePick,
+    style: stylePick,
+    lift: ctl.liftTarget,
+    walk: ctl.walkAt >= 0 && ctl.walkStop === Infinity,
+    bounce: bounceTrig,
+    arms: { R: [ctl.arms.R.raiseTo, ctl.arms.R.elbowTo], L: [ctl.arms.L.raiseTo, ctl.arms.L.elbowTo] },
+    wear: outfits,
+  };
+}
+function sendObsPose(now) {
+  if (!obsHost.on || !obsHost.conns.size || !P) return;
+  if (now - obsHost.lastPoseT < 0.016) return;
+  obsHost.lastPoseT = now;
+  const pkt = buildObsPose(now);
+  for (const conn of obsHost.conns) {
+    if (conn.open && !conn.__sendingModel) {
+      try { conn.send(pkt); } catch {}
+    }
+  }
+}
+function obsBroadcastModel() {
+  if (!obsHost.on || !obsHost.conns.size) return;
+  const hello = makeHelloPayload();
+  for (const conn of obsHost.conns) {
+    if (conn.open) {
+      try { conn.send(hello); } catch {}
+    }
+  }
+}
+function stopObsHost(forgetPref = true) {
+  obsHost.on = false; obsHost.loading = false;
+  if (obsHost.bgTimer) { clearInterval(obsHost.bgTimer); obsHost.bgTimer = null; }
+  for (const c of obsHost.conns) { try { c.close(); } catch {} }
+  obsHost.conns.clear();
+  if (obsHost.peer) { try { obsHost.peer.destroy(); } catch {} obsHost.peer = null; }
+  if (forgetPref) { try { localStorage.removeItem(OBS_LINK_ON_KEY); } catch {} }
+  updateObsLinkUi();
+}
+async function copyObsLinkUrl() {
+  const id = obsHost.id || getOrCreateLinkId();
+  const urlStr = getObsLinkUrl(id);
+  try {
+    await navigator.clipboard.writeText(urlStr);
+    flashStatus("OBS Link URL copied — paste into OBS Browser Source", 4);
+  } catch {
+    window.prompt("Paste this URL into an OBS Browser Source (keep this browser tab open for mic/cam/controls):", urlStr);
+  }
+}
+async function startObsHost(copyNow = false, customId = null) {
+  if (obsHost.on || obsHost.loading) return;
+  obsHost.loading = true;
+  obsHost.id = customId || getOrCreateLinkId();
+  updateObsLinkUi();
+  flashStatus("starting OBS Link…", 10);
+  try {
+    const Peer = await loadPeerCtor();
+    const peer = new Peer(obsHost.id, { config: ICE_CFG, debug: 0 });
+    obsHost.peer = peer;
+    peer.on("open", () => {
+      obsHost.loading = false;
+      obsHost.on = true;
+      try { localStorage.setItem(OBS_LINK_ON_KEY, "1"); } catch {}
+      updateObsLinkUi();
+      if (copyNow) copyObsLinkUrl();
+      else flashStatus("OBS Link ready — waiting for OBS", 3);
+      if (!obsHost.bgTimer) {
+        obsHost.bgTimer = setInterval(() => {
+          if (!obsHost.on || !obsHost.conns.size) return;
+          const now = performance.now() / 1000;
+          if (document.hidden) {
+            if (mic.on) updateMic(now);
+            if (cam.on) updateCam();
+          }
+          if (now - obsHost.lastPoseT >= 0.032) sendObsPose(now);
+        }, 33);
+      }
+    });
+    peer.on("connection", (conn) => {
+      conn.on("open", () => {
+        obsHost.conns.add(conn);
+        updateObsLinkUi();
+        flashStatus(`OBS connected (${obsHost.conns.size})`, 3);
+        try { conn.send(makeHelloPayload()); } catch {}
+        try { conn.send(buildObsPose(performance.now() / 1000)); } catch {}
+      });
+      conn.on("data", (msg) => {
+        if (!msg || typeof msg !== "object") return;
+        if (msg.t === "need-model") sendModelChunks(conn, msg.txId || ++obsHost.txSeq);
+      });
+      const cleanup = () => { obsHost.conns.delete(conn); updateObsLinkUi(); };
+      conn.on("close", cleanup);
+      conn.on("error", cleanup);
+    });
+    peer.on("disconnected", () => {
+      if (obsHost.on && obsHost.peer && !obsHost.peer.destroyed) {
+        setTimeout(() => { try { obsHost.peer && !obsHost.peer.destroyed && obsHost.peer.reconnect(); } catch {} }, 1500);
+      }
+    });
+    peer.on("error", (err) => {
+      console.warn("OBS Link host error:", err);
+      if (err && err.type === "unavailable-id") {
+        stopObsHost(false);
+        flashStatus("OBS Link already active in another tab", 4);
+      } else if (obsHost.loading) {
+        stopObsHost(false);
+        flashStatus("OBS Link connection failed", 4);
+      }
+    });
+  } catch (e) {
+    console.warn("OBS Link init failed:", e);
+    stopObsHost(false);
+    flashStatus("OBS Link unavailable", 4);
+  }
+}
+
+function applyObsPose(msg) {
+  if (!P || !window.__ready || paused || obsViewer.applyingModel) return;
+  obsViewer.posesRx++;
+  if (typeof msg.auto === "boolean") setAuto(msg.auto);
+  if (msg.view && VIEWS[msg.view] && msg.view !== view) setView(msg.view);
+  if (typeof msg.a === "number") ctl.aTarget = msg.a;
+  if (typeof msg.pitch === "number") ctl.pitchTarget = msg.pitch;
+  if (typeof msg.roll === "number") ctl.rollTarget = msg.roll;
+  if (typeof msg.eyes === "number") ctl.eyes = msg.eyes;
+  if (typeof msg.lift === "number") ctl.liftTarget = msg.lift;
+  ctl.vowel = msg.vowel || null;
+  if (Array.isArray(msg.eyeOpen) && msg.eyeOpen.length === 2) {
+    cam.remoteOn = true;
+    cam.eyeOpen[0] = msg.eyeOpen[0]; cam.eyeOpen[1] = msg.eyeOpen[1];
+    if (Array.isArray(msg.gaze) && msg.gaze.length === 2) { cam.gaze[0] = msg.gaze[0]; cam.gaze[1] = msg.gaze[1]; }
+  } else {
+    cam.remoteOn = false;
+  }
+  if (msg.arms) {
+    if (Array.isArray(msg.arms.R)) { ctl.arms.R.raiseTo = msg.arms.R[0]; ctl.arms.R.elbowTo = msg.arms.R[1]; }
+    if (Array.isArray(msg.arms.L)) { ctl.arms.L.raiseTo = msg.arms.L[0]; ctl.arms.L.elbowTo = msg.arms.L[1]; }
+  }
+  if (msg.face !== undefined) face.pick = (msg.face && P.expr && P.expr.faces && P.expr.faces[msg.face]) ? msg.face : null;
+  if (msg.hold !== undefined) hold.pick = (msg.hold && P.expr && P.expr.holds && P.expr.holds[msg.hold]) ? msg.hold : null;
+  if (msg.hair !== undefined) hairPick = (msg.hair && P.hairTint && P.hairTint.colours && P.hairTint.colours[msg.hair]) ? msg.hair : null;
+  if (msg.eye !== undefined) eyePick = (msg.eye && P.eyeTint && P.eyeTint.colours && P.eyeTint.colours[msg.eye]) ? msg.eye : null;
+  if (msg.style !== undefined && msg.style !== stylePick) pickStyle(msg.style && P.hairStyles && P.hairStyles[msg.style] ? msg.style : null);
+  if (msg.bounce) ctl.bounceAt = simT + 0.05;
+  if (typeof msg.walk === "boolean") {
+    const walking = ctl.walkAt >= 0 && ctl.walkStop === Infinity;
+    if (msg.walk && !walking) { ctl.walkAt = simT; ctl.walkStop = Infinity; }
+    else if (!msg.walk && walking) { ctl.walkStop = Math.ceil((simT - ctl.walkAt) / WALK.step); }
+  }
+  if (msg.wear && P.outfits) {
+    const now = performance.now() / 1000;
+    for (const g of Object.keys(P.outfits)) {
+      if (!(g in msg.wear)) continue;
+      const target = msg.wear[g] ? 1 : 0;
+      const cur = wearAt(g, now);
+      const curTarget = wear[g] ? wear[g][1] : ((P.outfits[g].default === false) ? 0 : 1);
+      if (target !== curTarget) wear[g] = [cur, target, now];
+    }
+  }
+}
+async function finishObsModelRx(rx) {
+  obsViewer.applyingModel = true;
+  try {
+    let totalBytes = 0;
+    for (const c of rx.chunks) totalBytes += c.byteLength;
+    const merged = new Uint8Array(totalBytes);
+    let off = 0;
+    for (const c of rx.chunks) { merged.set(c, off); off += c.byteLength; }
+    const buf = merged.buffer;
+    resetPlayerState();
+    await start(buf.slice(0), rx.name);
+    await idbSaveModel(rx.name, buf, MODEL_SLOT, currentL2D.hash);
+    if (obsViewer.conn && obsViewer.conn.open) {
+      try { obsViewer.conn.send({ t: "have-model", hash: currentL2D.hash }); } catch {}
+    }
+  } catch (e) {
+    console.warn("OBS Link model apply failed:", e);
+  } finally {
+    obsViewer.applyingModel = false;
+  }
+}
+async function startObsViewer(linkId) {
+  if (obsViewer.on || !linkId) return;
+  obsViewer.on = true;
+  obsViewer.id = linkId;
+  try {
+    const Peer = await loadPeerCtor();
+    const peer = new Peer(undefined, { config: ICE_CFG, debug: 0 });
+    obsViewer.peer = peer;
+    const connectNow = () => {
+      if (!obsViewer.on || !obsViewer.peer || obsViewer.peer.destroyed || !obsViewer.peer.open) return;
+      if (obsViewer.conn && obsViewer.conn.open) return;
+      try { if (obsViewer.conn) obsViewer.conn.close(); } catch {}
+      const conn = peer.connect(linkId, { reliable: true });
+      obsViewer.conn = conn;
+      conn.on("data", (msg) => {
+        if (!msg || typeof msg !== "object") return;
+        if (msg.t === "pose") {
+          applyObsPose(msg);
+        } else if (msg.t === "hello") {
+          if (msg.hash && msg.hash === currentL2D.hash) {
+            try { conn.send({ t: "have-model", hash: currentL2D.hash }); } catch {}
+          } else if (msg.size > 0 && msg.total > 0) {
+            obsViewer.rx = { txId: msg.txId, name: msg.name || "avatar.l2d", hash: msg.hash, total: msg.total, chunks: new Array(msg.total), got: 0 };
+            try { conn.send({ t: "need-model", txId: msg.txId }); } catch {}
+          }
+        } else if (msg.t === "mchunk" && obsViewer.rx && msg.txId === obsViewer.rx.txId) {
+          const rx = obsViewer.rx;
+          if (msg.seq >= 0 && msg.seq < rx.total && !rx.chunks[msg.seq]) {
+            const d = msg.data;
+            rx.chunks[msg.seq] = d instanceof Uint8Array ? d : (d instanceof ArrayBuffer ? new Uint8Array(d) : new Uint8Array(d.buffer || d));
+            rx.got++;
+            if (rx.got === rx.total) {
+              obsViewer.rx = null;
+              finishObsModelRx(rx);
+            }
+          }
+        }
+      });
+      const schedRetry = () => {
+        cam.remoteOn = false;
+        if (!obsViewer.on) return;
+        if (obsViewer.retryTimer) clearTimeout(obsViewer.retryTimer);
+        obsViewer.retryTimer = setTimeout(connectNow, 2500);
+      };
+      conn.on("close", schedRetry);
+      conn.on("error", schedRetry);
+    };
+    peer.on("open", connectNow);
+    peer.on("disconnected", () => {
+      if (obsViewer.on && peer && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch {} }, 2000);
+    });
+    peer.on("error", () => {
+      if (obsViewer.retryTimer) clearTimeout(obsViewer.retryTimer);
+      obsViewer.retryTimer = setTimeout(connectNow, 2500);
+    });
+  } catch (e) {
+    console.warn("OBS Link viewer error:", e);
+  }
+}
+
+if ($("obs-link")) {
+  $("obs-link").onclick = () => {
+    if (obsHost.on || obsHost.loading) {
+      stopObsHost(true);
+      flashStatus("OBS Link stopped");
+    } else {
+      startObsHost(true);
+    }
+  };
+}
+if ($("copy-obs")) {
+  $("copy-obs").onclick = () => copyObsLinkUrl();
+}
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o" && $("l2d-file")) {
+    e.preventDefault();
+    $("l2d-file").click();
+  }
+});
 stage.addEventListener("dragover", (e) => { e.preventDefault(); });
 stage.addEventListener("drop", (e) => {
   e.preventDefault();
@@ -2834,5 +3314,35 @@ stage.addEventListener("drop", (e) => {
   if (f && /\.(l2d|zip)$/i.test(f.name)) loadDroppedL2D(f);
 });
 
-start().catch((e) => fail("Drop a .l2d avatar bundle onto the stage or click Open .l2d. (" + e.message + ")"));
+(async () => {
+  try {
+    if (LINK_ID && !QP.get("model") && QP.get("saved") !== "0") {
+      const cached = await idbLoadModel(MODEL_SLOT);
+      if (cached && cached.buffer) {
+        await start(cached.buffer.slice(0), cached.name || "saved.l2d");
+        startObsViewer(LINK_ID);
+      } else {
+        // Connect straight to browser OBS Link so we receive the user's .l2d without flashing Test Signal first!
+        startObsViewer(LINK_ID);
+        setTimeout(() => {
+          if (!P && !obsViewer.rx && !obsViewer.applyingModel) {
+            start().catch((e) => fail("Could not load fallback avatar: " + e.message));
+          }
+        }, 4000);
+      }
+      return;
+    }
+    await start();
+    if (LINK_ID) {
+      startObsViewer(LINK_ID);
+    } else if (!OBS_MODE) {
+      const reqHost = QP.get("host");
+      let autoHost = false;
+      try { autoHost = localStorage.getItem(OBS_LINK_ON_KEY) === "1"; } catch {}
+      if (reqHost || autoHost) startObsHost(false, reqHost ? reqHost.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48) : null);
+    }
+  } catch (e) {
+    fail("Drop a .l2d avatar bundle onto the stage or click Open .l2d. (" + e.message + ")");
+  }
+})();
 </script>
