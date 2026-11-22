@@ -14,6 +14,8 @@ export class LeftPanels {
     this.engine = engine;
     this.onAction = onAction;
     this.thumbCache = Object.create(null);
+    this._paramCtrls = null;
+    this._vowelChips = [];
 
     this.rigView = document.getElementById("left-rig-view");
     this.exprView = document.getElementById("left-expr-view");
@@ -49,7 +51,10 @@ export class LeftPanels {
   _bindState() {
     const st = this.state;
     st.on("doc:loaded", () => {
+      this._thumbJobId = (this._thumbJobId || 0) + 1;
       this.thumbCache = Object.create(null);
+      this._paramCtrls = null;
+      this._vowelChips = [];
       this.syncModeView();
       this.renderLayerTree();
       this.renderParams();
@@ -68,7 +73,7 @@ export class LeftPanels {
       }
     });
     st.on("params:changed", () => {
-      this.renderParams();
+      this.syncParams();
       if (st.mode === "expressions" || st.mode === "animate") this.syncExprActive();
     });
   }
@@ -174,118 +179,186 @@ export class LeftPanels {
     el.scrollTop = prevScroll;
   }
 
-  /* ---------- PARAMETERS (Cubism Diamond Keyform Sliders) ---------- */
+  /* ---------- PARAMETERS (Smooth Continuous Cubism-Style Sliders + Clickable Diamond Keyforms) ---------- */
+  _paramDefs() {
+    const st = this.state;
+    const P = st.pack;
+    const samples = (P && P.samples) || [];
+    const turnR = P?.head?.turn?.R || -0.22;
+    const turnL = P?.head?.turn?.L || 0.22;
+    const yawKeys = samples.map((s, idx) => {
+      const normA = s.angle < 0 ? -s.angle / turnR : s.angle / turnL;
+      return {
+        u: clamp01((normA + 1) * 0.5),
+        idx,
+        label: `${(normA * 32.5).toFixed(1)}°`,
+      };
+    });
+
+    return [
+      {
+        id: "a", name: "Angle X", min: -32.5, max: 32.5, defaultVal: 0,
+        getVal: () => st.params.a * 32.5,
+        fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
+        keys: yawKeys,
+        isYaw: true,
+        onKeyClick: (k) => st.snapToSample(k.idx),
+        onDrag: (u) => { st.snapToKeyform = false; st.setAngle(u * 2 - 1, false); },
+        onInput: (v) => { st.snapToKeyform = false; st.setAngle(clamp(v / 32.5, -1, 1), false); },
+        onReset: () => {
+          const mid = Math.floor(samples.length / 2);
+          if (samples.length) st.snapToSample(mid);
+          else { st.snapToKeyform = false; st.setAngle(0, false); }
+        },
+      },
+      {
+        id: "pitch", name: "Angle Y", min: -30, max: 30, defaultVal: 0,
+        getVal: () => st.params.pitch * 30,
+        fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
+        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
+        onKeyClick: (k) => { st.params.pitch = k.u * 2 - 1; st.emit("params:changed"); },
+        onDrag: (u) => { st.params.pitch = u * 2 - 1; st.emit("params:changed"); },
+        onInput: (v) => { st.params.pitch = clamp(v / 30, -1, 1); st.emit("params:changed"); },
+        onReset: () => { st.params.pitch = 0; st.emit("params:changed"); },
+      },
+      {
+        id: "roll", name: "Angle Z", min: -20, max: 20, defaultVal: 0,
+        getVal: () => (st.params.roll * 180) / Math.PI,
+        fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
+        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
+        onKeyClick: (k) => { st.params.roll = ((k.u * 2 - 1) * 20 * Math.PI) / 180; st.emit("params:changed"); },
+        onDrag: (u) => { st.params.roll = ((u * 2 - 1) * 20 * Math.PI) / 180; st.emit("params:changed"); },
+        onInput: (v) => { st.params.roll = (clamp(v, -20, 20) * Math.PI) / 180; st.emit("params:changed"); },
+        onReset: () => { st.params.roll = 0; st.emit("params:changed"); },
+      },
+      {
+        id: "eyes", name: "Eye Open", min: 0, max: 1.25, defaultVal: 1.0,
+        getVal: () => st.params.eyes,
+        fmt: (v) => v.toFixed(2),
+        keys: [{ u: 0 }, { u: 0.8 }, { u: 1 }],
+        onKeyClick: (k) => { st.params.eyes = k.u * 1.25; st.emit("params:changed"); },
+        onDrag: (u) => { st.params.eyes = u * 1.25; st.emit("params:changed"); },
+        onInput: (v) => { st.params.eyes = clamp(v, 0, 1.25); st.emit("params:changed"); },
+        onReset: () => { st.params.eyes = 1.0; st.emit("params:changed"); },
+      },
+      {
+        id: "tailSway", name: "Tail Sway", min: -1, max: 1, defaultVal: 0,
+        getVal: () => st.params.tailSway,
+        fmt: (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
+        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
+        onKeyClick: (k) => { st.params.tailSway = k.u * 2 - 1; st.emit("params:changed"); },
+        onDrag: (u) => { st.params.tailSway = u * 2 - 1; st.emit("params:changed"); },
+        onInput: (v) => { st.params.tailSway = clamp(v, -1, 1); st.emit("params:changed"); },
+        onReset: () => { st.params.tailSway = 0; st.emit("params:changed"); },
+      },
+    ];
+  }
+
   renderParams() {
     const st = this.state;
     const P = st.pack;
     const el = this.paramEl;
     const prevScroll = el.scrollTop;
     el.innerHTML = "";
+    this._paramCtrls = null;
+    this._vowelChips = [];
     if (!P) return;
 
-    const samples = P.samples || [];
-    const maxTurn = Math.max(0.01, Math.abs(P.head?.turn?.L || 0.22));
-    const yawKeys = samples.map((s, idx) => ({
-      u: clamp01((s.angle / maxTurn + 1) * 0.5),
-      idx,
-      label: `${((s.angle / maxTurn) * 32.5).toFixed(1)}°`,
-    }));
-
-    const defs = [
-      {
-        id: "a", name: "Angle X", min: -32.5, max: 32.5,
-        val: st.params.a * 32.5, fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
-        keys: yawKeys,
-        activeKeyIdx: st.activeSampleIdx,
-        onKeyClick: (k) => st.snapToSample(k.idx),
-        onDrag: (u) => { st.snapToKeyform = false; st.setAngle(u * 2 - 1, false); },
-        onInput: (v) => { st.snapToKeyform = false; st.setAngle(clamp(v / 32.5, -1, 1), false); },
-      },
-      {
-        id: "pitch", name: "Angle Y", min: -30, max: 30,
-        val: st.params.pitch * 30, fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
-        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
-        onDrag: (u) => { st.params.pitch = u * 2 - 1; st.emit("params:changed"); },
-        onInput: (v) => { st.params.pitch = clamp(v / 30, -1, 1); st.emit("params:changed"); },
-      },
-      {
-        id: "roll", name: "Angle Z", min: -20, max: 20,
-        val: (st.params.roll * 180) / Math.PI, fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
-        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
-        onDrag: (u) => { st.params.roll = ((u * 2 - 1) * 20 * Math.PI) / 180; st.emit("params:changed"); },
-        onInput: (v) => { st.params.roll = (clamp(v, -20, 20) * Math.PI) / 180; st.emit("params:changed"); },
-      },
-      {
-        id: "eyes", name: "Eye Open", min: 0, max: 1.25,
-        val: st.params.eyes, fmt: (v) => v.toFixed(2),
-        keys: [{ u: 0 }, { u: 0.8 }, { u: 1 }],
-        onDrag: (u) => { st.params.eyes = u * 1.25; st.emit("params:changed"); },
-        onInput: (v) => { st.params.eyes = clamp(v, 0, 1.25); st.emit("params:changed"); },
-      },
-      {
-        id: "tailSway", name: "Tail Sway", min: -1, max: 1,
-        val: st.params.tailSway, fmt: (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
-        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
-        onDrag: (u) => { st.params.tailSway = u * 2 - 1; st.emit("params:changed"); },
-        onInput: (v) => { st.params.tailSway = clamp(v, -1, 1); st.emit("params:changed"); },
-      },
-    ];
+    const defs = this._paramDefs();
+    const ctrls = [];
 
     for (const d of defs) {
-      const uVal = clamp01((d.val - d.min) / (d.max - d.min));
       const row = document.createElement("div");
       row.className = "param-row";
 
       const lbl = document.createElement("span");
       lbl.className = "param-name";
       lbl.textContent = d.name;
+      lbl.title = `Double-click to reset ${d.name}`;
+      lbl.addEventListener("dblclick", () => d.onReset());
 
       const wrap = document.createElement("div");
       wrap.className = "param-track-wrap";
       const track = document.createElement("div");
       track.className = "param-track";
 
-      // Crimson fill from center (or 0) to thumb
       const fill = document.createElement("div");
       fill.className = "param-fill";
-      const originU = d.min < 0 ? 0.5 : 0;
-      fill.style.left = `${Math.min(originU, uVal) * 100}%`;
-      fill.style.width = `${Math.abs(uVal - originU) * 100}%`;
       track.appendChild(fill);
 
-      // Diamond keyform markers
+      const diamonds = [];
       for (const k of d.keys) {
         const dm = document.createElement("span");
-        dm.className = "param-diamond" + (d.activeKeyIdx !== undefined && k.idx === d.activeKeyIdx ? " active" : "");
+        dm.className = "param-diamond";
         dm.style.left = `${k.u * 100}%`;
-        if (k.label) dm.title = `Snap to keyform ${k.label}`;
-        if (d.onKeyClick) {
-          dm.addEventListener("pointerdown", (e) => { e.stopPropagation(); d.onKeyClick(k); });
-        }
+        if (k.label) dm.title = `Click to snap to ${k.label} (drag anywhere to scrub smoothly)`;
         track.appendChild(dm);
+        diamonds.push({ el: dm, key: k });
       }
 
       const thumb = document.createElement("span");
       thumb.className = "param-thumb";
-      thumb.style.left = `${uVal * 100}%`;
       track.appendChild(thumb);
 
       const limits = document.createElement("div");
       limits.className = "param-limits";
       limits.innerHTML = `<span>${d.min}</span><span>${d.max > 0 && d.min < 0 ? "+" + d.max : d.max}</span>`;
 
-      const scrub = (clientX) => {
+      // Smooth continuous scrubbing on the full track wrapper (with click-to-snap on diamonds!)
+      const scrub = (clientX, shiftSnap = false) => {
         const r = track.getBoundingClientRect();
-        const u = clamp01((clientX - r.left) / Math.max(1, r.width));
-        d.onDrag(u);
+        if (r.width <= 0) return;
+        const u = clamp01((clientX - r.left) / r.width);
+        if (shiftSnap && d.keys.length && d.onKeyClick) {
+          let best = d.keys[0], bestD = Infinity;
+          for (const k of d.keys) {
+            const dist = Math.abs(k.u - u);
+            if (dist < bestD) { bestD = dist; best = k; }
+          }
+          d.onKeyClick(best);
+        } else {
+          d.onDrag(u);
+        }
       };
-      track.addEventListener("pointerdown", (e) => {
+
+      wrap.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
         e.preventDefault();
-        scrub(e.clientX);
-        const onM = (ev) => scrub(ev.clientX);
-        const onU = () => { window.removeEventListener("pointermove", onM); window.removeEventListener("pointerup", onU); };
+        wrap.classList.add("dragging");
+        wrap.setPointerCapture(e.pointerId);
+
+        // Check if pointer went down directly on a diamond keyform marker
+        const hitDiamond = diamonds.find((item) => item.el === e.target);
+        const startX = e.clientX;
+        let dragged = false;
+
+        if (!hitDiamond) {
+          dragged = true;
+          scrub(e.clientX, e.shiftKey);
+        }
+
+        const onM = (ev) => {
+          if (!dragged && Math.abs(ev.clientX - startX) >= 3) dragged = true;
+          if (dragged) scrub(ev.clientX, ev.shiftKey);
+        };
+        const onU = (ev) => {
+          wrap.classList.remove("dragging");
+          if (wrap.hasPointerCapture(e.pointerId)) wrap.releasePointerCapture(e.pointerId);
+          window.removeEventListener("pointermove", onM);
+          window.removeEventListener("pointerup", onU);
+          window.removeEventListener("pointercancel", onU);
+          if (!dragged && hitDiamond && d.onKeyClick) {
+            d.onKeyClick(hitDiamond.key);
+          }
+        };
         window.addEventListener("pointermove", onM);
         window.addEventListener("pointerup", onU);
+        window.addEventListener("pointercancel", onU);
+      });
+
+      wrap.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        d.onReset();
       });
 
       wrap.appendChild(track);
@@ -294,14 +367,18 @@ export class LeftPanels {
       const inp = document.createElement("input");
       inp.className = "param-val";
       inp.type = "text";
-      inp.value = d.fmt(d.val);
       inp.addEventListener("change", () => {
         const n = parseFloat(inp.value);
         if (!Number.isNaN(n)) d.onInput(n);
+        else this.syncParams();
+      });
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") inp.blur();
       });
 
       row.append(lbl, wrap, inp);
       el.appendChild(row);
+      ctrls.push({ def: d, fill, thumb, diamonds, inp });
     }
 
     // Mouth Vowel row (A / E / I / O / U chips)
@@ -314,17 +391,58 @@ export class LeftPanels {
     for (const v of ["A", "E", "I", "O", "U"]) {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "vowel-chip" + (st.params.vowel === v ? " active" : "");
+      b.className = "vowel-chip";
+      b.dataset.vowel = v;
       b.textContent = v;
       b.addEventListener("click", () => {
         st.params.vowel = st.params.vowel === v ? null : v;
         st.emit("params:changed");
       });
       vBar.appendChild(b);
+      this._vowelChips.push(b);
     }
     vRow.appendChild(vBar);
     el.appendChild(vRow);
+
+    this._paramCtrls = ctrls;
+    this.syncParams();
     el.scrollTop = prevScroll;
+  }
+
+  /** Fast in-place DOM sync during continuous slider scrubbing / timeline playback (zero DOM churn!). */
+  syncParams() {
+    if (!this._paramCtrls || !this.state.pack) {
+      this.renderParams();
+      return;
+    }
+    const st = this.state;
+    for (const c of this._paramCtrls) {
+      const d = c.def;
+      const val = d.getVal();
+      const uVal = clamp01((val - d.min) / (d.max - d.min));
+      const originU = d.min < 0 ? 0.5 : 0;
+      c.fill.style.left = `${Math.min(originU, uVal) * 100}%`;
+      c.fill.style.width = `${Math.abs(uVal - originU) * 100}%`;
+      c.thumb.style.left = `${uVal * 100}%`;
+
+      for (const item of c.diamonds) {
+        if (d.isYaw) {
+          const onKey = st.snapToKeyform
+            ? item.key.idx === st.activeSampleIdx
+            : Math.abs(item.key.u - uVal) < 0.006;
+          item.el.classList.toggle("active", onKey);
+        } else {
+          item.el.classList.toggle("active", Math.abs(item.key.u - uVal) < 0.008);
+        }
+      }
+
+      if (document.activeElement !== c.inp) {
+        c.inp.value = d.fmt(val);
+      }
+    }
+    for (const b of this._vowelChips) {
+      b.classList.toggle("active", st.params.vowel === b.dataset.vowel);
+    }
   }
 
   /* ---------- EXPRESSIONS & TOGGLES Left View (Expressions / Animate Mode) ---------- */

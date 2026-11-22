@@ -126,7 +126,7 @@ export class TimelineController {
       this.drawDope();
     });
     st.on("mode:changed", () => this.setExpanded(st.timeline.expanded));
-    st.on("params:changed", () => this.renderTracks());
+    st.on("params:changed", () => this.syncTrackValues());
   }
 
   setExpanded(exp) {
@@ -242,7 +242,7 @@ export class TimelineController {
     }
 
     this.timeMini.textContent = formatTime(t);
-    this.renderTracks();
+    this.syncTrackValues();
     if (st.timeline.expanded) this.drawDope();
   }
 
@@ -250,17 +250,35 @@ export class TimelineController {
     const st = this.state;
     const el = this.tracksCol;
     el.innerHTML = `<div class="tl-track-head-spacer"><span>Track</span><span style="text-align:right">Value</span></div>`;
+    this._trackValEls = Object.create(null);
     for (const td of TRACK_DEFS) {
       const row = document.createElement("div");
       row.className = "tl-track-row" + (st.timeline.selectedTrack === td.key ? " selected" : "");
       const v = td.key === "face" ? (st.params.face || "Neutral") : (st.params[td.key] ?? 0);
-      row.innerHTML = `<span>▸ ${td.label}</span><span class="tl-track-val">${td.fmt(v)}</span>`;
+      const lbl = document.createElement("span");
+      lbl.textContent = `▸ ${td.label}`;
+      const valSpan = document.createElement("span");
+      valSpan.className = "tl-track-val";
+      valSpan.textContent = td.fmt(v);
+      row.append(lbl, valSpan);
       row.addEventListener("click", () => {
         st.timeline.selectedTrack = td.key;
         this.renderTracks();
         this.drawDope();
       });
       el.appendChild(row);
+      this._trackValEls[td.key] = valSpan;
+    }
+  }
+
+  syncTrackValues() {
+    if (!this._trackValEls) { this.renderTracks(); return; }
+    const st = this.state;
+    for (const td of TRACK_DEFS) {
+      const sp = this._trackValEls[td.key];
+      if (!sp) continue;
+      const v = td.key === "face" ? (st.params.face || "Neutral") : (st.params[td.key] ?? 0);
+      sp.textContent = td.fmt(v);
     }
   }
 

@@ -102,22 +102,24 @@ export class ViewportController {
       }
     }
 
-    // 2. Spring chain joints (when Chain tool or showChains)
+    // 2. Spring chain joints (when Chain tool or showChains) — uses live transformed positions!
     if (st.tool === "chain" || st.view.showChains) {
       for (let ci = 0; ci < (P.chains || []).length; ci++) {
-        const ch = P.chains[ci];
-        for (let ji = 0; ji < ch.joints.length / 2; ji++) {
-          const [px, py] = this.canonToScreen(ch.joints[ji * 2], ch.joints[ji * 2 + 1]);
+        const livePts = this.engine.getChainLivePoints(ci);
+        for (let ji = 0; ji < livePts.length; ji++) {
+          const [px, py] = this.canonToScreen(livePts[ji][0], livePts[ji][1]);
           if (Math.hypot(sx - px, sy - py) <= 9) return { kind: "chain_joint", ci, ji };
         }
       }
     }
 
-    // 3. Lattice / Mesh vertex handles on selected layer
+    // 3. Lattice / Mesh vertex handles on selected layer (exact live turned/pitched/rolled position!)
     const L = st.getSelectedLayer();
-    const SL = st.getActiveSampleLayer();
+    const lIdx = st.selectedLayerIdx;
+    const SL = lIdx >= 0 ? this.engine.getLiveSampleLayer(lIdx) : null;
     if (L && SL && (st.tool === "lattice" || st.tool === "mesh")) {
-      const { gd, pts } = latticeCanvasPoints(L, SL, st.brush.gridSize);
+      const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
+      const { gd, pts } = latticeCanvasPoints(L, SL, st.brush.gridSize, toScr);
       for (const pt of pts) {
         const [px, py] = this.canonToScreen(pt.x, pt.y);
         if (Math.hypot(sx - px, sy - py) <= 9) return { kind: "lattice_pt", ix: pt.ix, iy: pt.iy, gd };
@@ -126,7 +128,7 @@ export class ViewportController {
 
     // 4. Transform gizmo handles on selected layer
     if (L && SL && (st.tool === "transform" || st.tool === "select")) {
-      const box = this._layerBoxScreen(L, SL);
+      const box = this._layerBoxScreen(L, lIdx, SL);
       if (box) {
         if (Math.hypot(sx - box.rotHandle[0], sy - box.rotHandle[1]) <= 10) return { kind: "rot" };
         for (let i = 0; i < 4; i++) {
@@ -167,13 +169,21 @@ export class ViewportController {
         st.pushUndo("Edit Spring Chain Joint");
         st.selectedChainIdx = hit.ci;
         st.emit("selection:changed");
-        this.drag = { type: "chain_joint", ci: hit.ci, ji: hit.ji };
+        const ch = P.chains[hit.ci];
+        this.drag = {
+          type: "chain_joint",
+          ci: hit.ci,
+          ji: hit.ji,
+          startCanon: canon,
+          origJoint: ch ? [ch.joints[hit.ji * 2], ch.joints[hit.ji * 2 + 1]] : [canon[0], canon[1]],
+        };
         this.overlay.setPointerCapture(e.pointerId);
         return;
       }
       if (hit.kind === "lattice_pt") {
         st.pushUndo("Sculpt Lattice Point");
         st.snapToSample(st.activeSampleIdx);
+        this.engine.syncFrameState(st.params, st.activeSampleIdx);
         this.drag = { type: "lattice_pt", ix: hit.ix, iy: hit.iy, prevCanon: canon };
         this.overlay.setPointerCapture(e.pointerId);
         return;
@@ -181,9 +191,11 @@ export class ViewportController {
       if (hit.kind === "rot") {
         st.pushUndo("Rotate Layer");
         st.snapToSample(st.activeSampleIdx);
+        this.engine.syncFrameState(st.params, st.activeSampleIdx);
         const SL = st.getActiveSampleLayer();
         const dec = decomposeAffine(SL.A);
-        const ang0 = Math.atan2(canon[1] - SL.t[1], canon[0] - SL.t[0]);
+        const pLayer = this.engine.screenToLayerCanon(st.selectedLayerIdx, canon);
+        const ang0 = Math.atan2(pLayer[1] - SL.t[1], pLayer[0] - SL.t[0]);
         this.drag = { type: "rot", dec, ang0 };
         this.overlay.setPointerCapture(e.pointerId);
         return;
@@ -191,9 +203,11 @@ export class ViewportController {
       if (hit.kind === "scale") {
         st.pushUndo("Scale Layer");
         st.snapToSample(st.activeSampleIdx);
+        this.engine.syncFrameState(st.params, st.activeSampleIdx);
         const SL = st.getActiveSampleLayer();
         const dec = decomposeAffine(SL.A);
-        const d0 = Math.max(10, Math.hypot(canon[0] - SL.t[0], canon[1] - SL.t[1]));
+        const pLayer = this.engine.screenToLayerCanon(st.selectedLayerIdx, canon);
+        const d0 = Math.max(10, Math.hypot(pLayer[0] - SL.t[0], pLayer[1] - SL.t[1]));
         this.drag = { type: "scale", dec, d0 };
         this.overlay.setPointerCapture(e.pointerId);
         return;
@@ -206,6 +220,7 @@ export class ViewportController {
       if (L && !st.lockedIds.has(L.id)) {
         st.pushUndo("Warp Brush Stroke");
         st.snapToSample(st.activeSampleIdx);
+        this.engine.syncFrameState(st.params, st.activeSampleIdx);
         this.drag = { type: "warp_brush", prevCanon: canon };
         this.overlay.setPointerCapture(e.pointerId);
         return;
@@ -221,6 +236,7 @@ export class ViewportController {
         st.hiddenIds,
         st.soloId,
         st.params.wear,
+        st.params,
       );
       if (picked >= 0 && (st.tool === "select" || picked !== st.selectedLayerIdx)) {
         st.selectLayer(picked);
@@ -229,8 +245,10 @@ export class ViewportController {
       if (L && st.tool === "transform" && !st.lockedIds.has(L.id)) {
         st.pushUndo("Move Layer");
         st.snapToSample(st.activeSampleIdx);
+        this.engine.syncFrameState(st.params, st.activeSampleIdx);
         const SL = st.getActiveSampleLayer();
-        this.drag = { type: "translate", startCanon: canon, origT: [...SL.t] };
+        const startLayer = this.engine.screenToLayerCanon(st.selectedLayerIdx, canon);
+        this.drag = { type: "translate", startLayer, origT: [...SL.t] };
         this.overlay.setPointerCapture(e.pointerId);
       }
     }
@@ -271,26 +289,31 @@ export class ViewportController {
     if (this.drag.type === "chain_joint") {
       const ch = P.chains[this.drag.ci];
       if (ch) {
-        ch.joints[this.drag.ji * 2] = +canon[0].toFixed(1);
-        ch.joints[this.drag.ji * 2 + 1] = +canon[1].toFixed(1);
+        const dx = canon[0] - this.drag.startCanon[0];
+        const dy = canon[1] - this.drag.startCanon[1];
+        ch.joints[this.drag.ji * 2] = +(this.drag.origJoint[0] + dx).toFixed(1);
+        ch.joints[this.drag.ji * 2 + 1] = +(this.drag.origJoint[1] + dy).toFixed(1);
         st.emit("pack:mutated", { structural: true });
       }
       return;
     }
 
     const L = st.getSelectedLayer();
+    const lIdx = st.selectedLayerIdx;
     const SL = st.getActiveSampleLayer();
     if (!L || !SL) return;
 
     if (this.drag.type === "translate") {
-      SL.t[0] = +(this.drag.origT[0] + (canon[0] - this.drag.startCanon[0])).toFixed(2);
-      SL.t[1] = +(this.drag.origT[1] + (canon[1] - this.drag.startCanon[1])).toFixed(2);
+      const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
+      SL.t[0] = +(this.drag.origT[0] + (currLayer[0] - this.drag.startLayer[0])).toFixed(2);
+      SL.t[1] = +(this.drag.origT[1] + (currLayer[1] - this.drag.startLayer[1])).toFixed(2);
       st.emit("pack:mutated", { structural: false });
       return;
     }
 
     if (this.drag.type === "rot") {
-      const ang = Math.atan2(canon[1] - SL.t[1], canon[0] - SL.t[0]);
+      const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
+      const ang = Math.atan2(currLayer[1] - SL.t[1], currLayer[0] - SL.t[0]);
       const deg = this.drag.dec.rotDeg + ((ang - this.drag.ang0) * 180) / Math.PI;
       SL.A = composeAffine(this.drag.dec.sx, this.drag.dec.sy, deg);
       st.emit("pack:mutated", { structural: false });
@@ -298,7 +321,8 @@ export class ViewportController {
     }
 
     if (this.drag.type === "scale") {
-      const d = Math.max(10, Math.hypot(canon[0] - SL.t[0], canon[1] - SL.t[1]));
+      const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
+      const d = Math.max(10, Math.hypot(currLayer[0] - SL.t[0], currLayer[1] - SL.t[1]));
       const f = d / this.drag.d0;
       SL.A = composeAffine(this.drag.dec.sx * f, this.drag.dec.sy * f, this.drag.dec.rotDeg);
       st.emit("pack:mutated", { structural: false });
@@ -306,8 +330,10 @@ export class ViewportController {
     }
 
     if (this.drag.type === "lattice_pt") {
-      const dx = canon[0] - this.drag.prevCanon[0];
-      const dy = canon[1] - this.drag.prevCanon[1];
+      const prevLayer = this.engine.screenToLayerCanon(lIdx, this.drag.prevCanon);
+      const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
+      const dx = currLayer[0] - prevLayer[0];
+      const dy = currLayer[1] - prevLayer[1];
       dragLatticePoint(L, SL, this.drag.ix, this.drag.iy, dx, dy, st.brush.gridSize);
       this.drag.prevCanon = canon;
       st.emit("pack:mutated", { structural: false });
@@ -316,8 +342,10 @@ export class ViewportController {
 
     if (this.drag.type === "warp_brush") {
       const radCanon = st.brush.radius / Math.max(0.05, this.canonScale());
+      const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
+      const toLay = (p) => this.engine.screenToLayerCanon(lIdx, p);
       const changed = applyWarpBrush(
-        L, SL, this.drag.prevCanon, canon, radCanon, st.brush.strength, st.brush.mode, st.brush.gridSize,
+        L, SL, this.drag.prevCanon, canon, radCanon, st.brush.strength, st.brush.mode, st.brush.gridSize, toScr, toLay,
       );
       this.drag.prevCanon = canon;
       if (changed) st.emit("pack:mutated", { structural: false });
@@ -353,16 +381,17 @@ export class ViewportController {
     return list;
   }
 
-  _layerBoxScreen(L, SL) {
+  _layerBoxScreen(L, layerIdx, SL) {
     const A = SL.A || [1, 0, 0, 1], t = SL.t || [0, 0];
     const w2 = L.w * 0.5, h2 = L.h * 0.5;
-    const raw = [[-w2, -h2], [w2, -h2], [w2, h2], [-w2, h2]].map(([lx, ly]) => [
-      A[0] * lx + A[1] * ly + t[0],
-      A[2] * lx + A[3] * ly + t[1],
-    ]);
-    const corners = raw.map(([cx, cy]) => this.canonToScreen(cx, cy));
-    const topMid = [(corners[0][0] + corners[1][0]) * 0.5, (corners[0][1] + corners[1][1]) * 0.5];
-    const center = this.canonToScreen(t[0], t[1]);
+    const toScr = (lx, ly) => {
+      const lp = [A[0] * lx + A[1] * ly + t[0], A[2] * lx + A[3] * ly + t[1]];
+      const sp = this.engine.layerToScreenCanon(layerIdx, lp);
+      return this.canonToScreen(sp[0], sp[1]);
+    };
+    const corners = [[-w2, -h2], [w2, -h2], [w2, h2], [-w2, h2]].map(([lx, ly]) => toScr(lx, ly));
+    const topMid = toScr(0, -h2);
+    const center = toScr(0, 0);
     const vx = topMid[0] - center[0], vy = topMid[1] - center[1];
     const vl = Math.hypot(vx, vy) || 1;
     const rotHandle = [topMid[0] + (vx / vl) * 26, topMid[1] + (vy / vl) * 26];
@@ -407,14 +436,12 @@ export class ViewportController {
       ctx.stroke();
     }
 
-    // 2. Spring Physics Chains spline overlay (matching studio_concept_rigging.png)
+    // 2. Spring Physics Chains spline overlay (live transformed with head turn/pitch/roll + spring physics!)
     if (st.view.showChains && P.chains && P.chains.length) {
       P.chains.forEach((ch, ci) => {
         const isSel = ci === st.selectedChainIdx;
-        const pts = [];
-        for (let ji = 0; ji < ch.joints.length / 2; ji++) {
-          pts.push(this.canonToScreen(ch.joints[ji * 2], ch.joints[ji * 2 + 1]));
-        }
+        const livePts = this.engine.getChainLivePoints(ci);
+        const pts = livePts.map(([x, y]) => this.canonToScreen(x, y));
         if (pts.length < 2) return;
         ctx.save();
         ctx.strokeStyle = isSel ? "rgba(242, 243, 245, 0.88)" : "rgba(242, 243, 245, 0.28)";
@@ -437,13 +464,15 @@ export class ViewportController {
       });
     }
 
-    // 3. Selected Layer Lattice Cage / Mesh Triangulation / Transform Gizmo
+    // 3. Selected Layer Lattice Cage / Mesh Triangulation / Transform Gizmo (exact 1:1 live shader tracking!)
     const L = st.getSelectedLayer();
-    const SL = st.getActiveSampleLayer();
+    const lIdx = st.selectedLayerIdx;
+    const SL = lIdx >= 0 ? this.engine.getLiveSampleLayer(lIdx) : null;
     if (L && SL && !st.hiddenIds.has(L.id)) {
       const showLat = st.view.showLattice && (st.tool === "warp_brush" || st.tool === "lattice" || st.tool === "mesh");
       if (showLat) {
-        const { gd, pts } = latticeCanvasPoints(L, SL, st.brush.gridSize);
+        const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
+        const { gd, pts } = latticeCanvasPoints(L, SL, st.brush.gridSize, toScr);
         const sPts = pts.map((p) => this.canonToScreen(p.x, p.y));
         ctx.save();
         // Horizontal & vertical lattice lines
@@ -487,7 +516,7 @@ export class ViewportController {
         }
         ctx.restore();
       } else if ((st.tool === "transform" || st.tool === "select") && st.mode !== "animate" && st.mode !== "expressions") {
-        const box = this._layerBoxScreen(L, SL);
+        const box = this._layerBoxScreen(L, lIdx, SL);
         if (box) {
           ctx.save();
           ctx.strokeStyle = "rgba(190, 30, 60, 0.85)";

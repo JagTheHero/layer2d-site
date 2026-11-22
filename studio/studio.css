@@ -337,32 +337,42 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   gap: 8px;
 }
-.param-name { font-size: 11.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.param-track-wrap { position: relative; padding: 6px 0 11px; }
+.param-name { font-size: 11.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.param-track-wrap { position: relative; padding: 9px 0 13px; cursor: ew-resize; touch-action: none; }
 .param-track {
   position: relative;
-  height: 2px;
+  height: 3px;
+  border-radius: 2px;
   background: rgba(255, 255, 255, 0.22);
-  cursor: pointer;
+}
+.param-track-wrap:hover .param-track,
+.param-track-wrap.dragging .param-track {
+  background: rgba(255, 255, 255, 0.34);
 }
 .param-fill {
   position: absolute;
-  top: 0; height: 2px;
+  top: 0; height: 3px;
+  border-radius: 2px;
   background: var(--crimson);
   pointer-events: none;
 }
 .param-diamond {
   position: absolute;
   top: 50%;
-  width: 7px; height: 7px;
+  width: 5px; height: 5px;
   transform: translate(-50%, -50%) rotate(45deg);
-  background: var(--text);
+  background: rgba(242, 243, 245, 0.72);
   border: 1px solid var(--bg);
   cursor: pointer;
   z-index: 2;
 }
+.param-diamond:hover {
+  background: #ffffff;
+  width: 7px; height: 7px;
+  z-index: 4;
+}
 .param-diamond.active {
-  width: 9px; height: 9px;
+  width: 7px; height: 7px;
   background: var(--crimson);
   border-color: var(--text);
   z-index: 4;
@@ -370,12 +380,17 @@ a { color: inherit; text-decoration: none; }
 .param-thumb {
   position: absolute;
   top: 50%;
-  width: 10px; height: 10px;
+  width: 11px; height: 11px;
   transform: translate(-50%, -50%) rotate(45deg);
   background: var(--crimson);
   border: 1.5px solid #fff;
+  box-shadow: 0 0 0 2px rgba(12, 13, 16, 0.55);
   pointer-events: none;
   z-index: 5;
+}
+.param-track-wrap.dragging .param-thumb {
+  width: 13px; height: 13px;
+  background: var(--crimson-hover);
 }
 .param-limits {
   position: absolute;

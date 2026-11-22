@@ -75,8 +75,11 @@ export class Layer2DEngine {
     this.faceSince = 0;
     this.lastFace = null;
     this.lastView = [0, 0, 1200, 2000];
+    this.lastFrame = null;
     this.fboW = 0;
     this.fboH = 0;
+    this._offFbo = null;
+    this._offCanvas = null;
     this.ready = false;
 
     // Physics preview tuning overrides (from Studio Physics / Animate panels)
@@ -447,16 +450,6 @@ export class Layer2DEngine {
     return [H.centre[0] + u * H.eu[0] + v * H.ev[0], H.centre[1] + u * H.eu[1] + v * H.ev[1]];
   }
 
-  _cylFwd(p, a) {
-    const H = this.P.head;
-    const dx = p[0] - H.centre[0], dy = p[1] - H.centre[1];
-    const u = dx * H.eu[0] + dy * H.eu[1], v = dx * H.ev[0] + dy * H.ev[1];
-    if (Math.abs(u) >= H.radius) return p;
-    const q = Math.asin(clamp(u / H.radius, -0.999, 0.999));
-    const u2 = H.radius * Math.sin(q + a * Math.cos(q));
-    return [H.centre[0] + u2 * H.eu[0] + v * H.ev[0], H.centre[1] + u2 * H.eu[1] + v * H.ev[1]];
-  }
-
   _hipsFwd(p, m) {
     const y = p[1] + (m.bounce || 0);
     return [p[0] + (m.lean || 0) * (this.P.motion.footY - y), y];
@@ -464,6 +457,379 @@ export class Layer2DEngine {
 
   _torsoFwd(p, m) {
     return this._hipsFwd(rotP(p, this.P.motion.waist, m.sway || 0), m);
+  }
+
+  /* ---------- Exact 1:1 Shader Coordinate Transforms (Layer Space <-> Screen Canonical Space) ---------- */
+  _buildMotionState(params) {
+    const P = this.P;
+    return {
+      a: params.a || 0,
+      pitch: params.pitch || 0,
+      roll: params.roll || 0,
+      sway: params.bodySway || 0,
+      lean: params.bodyLean || 0,
+      breath: 1.0 + (params.breath || 0),
+      body: (params.a || 0) * ((P?.motion?.bodyFollow && P.motion.bodyFollow[0]) || 0),
+      bounce: 0,
+      tailWag: params.tailWag ?? 1.0,
+      tailPhaseOffset: params.tailSway || 0,
+    };
+  }
+
+  syncFrameState(params, exactIdx = null) {
+    if (!this.P) return null;
+    const m = this._buildMotionState(params);
+    const key = this.keyAt(m.a, exactIdx);
+    const fc = this._evalFace(params);
+    this.lastFrame = { m, key, fc, exactIdx };
+    return this.lastFrame;
+  }
+
+  getLiveSampleLayer(layerIdx, params = null, exactIdx = null) {
+    if (!this.P || layerIdx < 0 || layerIdx >= this.P.layers.length) return null;
+    const fr = params ? this.syncFrameState(params, exactIdx) : this.lastFrame;
+    if (!fr || !fr.key || !fr.key.layers[layerIdx]) {
+      const m = params ? this._buildMotionState(params) : { a: 0, pitch: 0, roll: 0, sway: 0, lean: 0, breath: 1, body: 0, bounce: 0, tailWag: 1, tailPhaseOffset: 0 };
+      const key = this.keyAt(m.a, exactIdx);
+      return key.layers[layerIdx] || null;
+    }
+    return this._effectiveLayerPose(layerIdx, fr.key, fr.m, fr.fc).sl;
+  }
+
+  _effectiveLayerPose(layerIdx, key, m, fc) {
+    const P = this.P;
+    const L = P.layers[layerIdx];
+    const k = key.layers[layerIdx];
+    if (!L || !k) return { A: [1, 0, 0, 1], t: [0, 0], sl: k };
+    let A = k.A, t = k.t;
+    let effMove = fc?.move?.[L.id] || null;
+    const shadowId = P.hairShadowId || null;
+    if (shadowId && L.id === shadowId && (m.a || m.pitch)) {
+      const dx = -8 * (m.a || 0), dy = -6 * (m.pitch || 0);
+      effMove = effMove ? [effMove[0] + dx, effMove[1] + dy, effMove[2]] : [dx, dy, 0];
+    }
+    if (effMove) {
+      const r = (effMove[2] || 0) * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
+      A = [co * A[0] + si * A[2], co * A[1] + si * A[3], -si * A[0] + co * A[2], -si * A[1] + co * A[3]];
+      t = [t[0] + effMove[0], t[1] + effMove[1]];
+    }
+    const tailCfg = P.tail || null;
+    if (tailCfg && L.id === tailCfg.id) {
+      const wag = m.tailWag ?? 1.0;
+      const freq = tailCfg.freq || 2.45;
+      const ph = this.simT * freq;
+      const sw = (this.physics.enabled ? (Math.sin(ph) + 0.14 * Math.sin(2.0 * ph - 0.65)) * wag : 0) + (m.tailPhaseOffset || 0);
+      const piv = this._hipsFwd(tailCfg.pivot, m);
+      const th = (tailCfg.amp || 0.165) * sw;
+      const co = Math.cos(th), si = Math.sin(th);
+      A = [co * A[0] - si * A[2], co * A[1] - si * A[3], si * A[0] + co * A[2], si * A[1] + co * A[3]];
+      const dx = t[0] - piv[0], dy = t[1] - piv[1];
+      t = [piv[0] + co * dx - si * dy, piv[1] + si * dx + co * dy];
+    }
+    return { A, t, sl: { ...k, A, t } };
+  }
+
+  _rotGLSL(p, c, a) {
+    // Matches shaders.js rot(p, c, a) verbatim: c + (co*dx + si*dy, -si*dx + co*dy)
+    const co = Math.cos(a), si = Math.sin(a);
+    const dx = p[0] - c[0], dy = p[1] - c[1];
+    return [c[0] + co * dx + si * dy, c[1] - si * dx + co * dy];
+  }
+
+  _smoothstep(e0, e1, x) {
+    const t = clamp((x - e0) / (e1 - e0 || 1e-6), 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+
+  _twistXInv(px, py, depth, m) {
+    const MM = this.P.motion;
+    const body = m.body || 0;
+    if (!body) return px;
+    const tw = MM.twistY || [0, 1];
+    const a = body * depth * (1 - this._smoothstep(tw[0], tw[1], py));
+    const u = px - MM.bodyC;
+    if (Math.abs(u) >= MM.bodyR) return px;
+    const q = Math.asin(clamp(u / MM.bodyR, -0.999, 0.999));
+    return MM.bodyC + MM.bodyR * Math.sin(q - a * Math.cos(q));
+  }
+
+  _twistXFwd(pxLayer, py, depth, m) {
+    const MM = this.P.motion;
+    const body = m.body || 0;
+    if (!body) return pxLayer;
+    let x = pxLayer;
+    for (let it = 0; it < 6; it++) {
+      const fx = this._twistXInv(x, py, depth, m) - pxLayer;
+      if (Math.abs(fx) < 1e-4) break;
+      const eps = 0.25;
+      const df = (this._twistXInv(x + eps, py, depth, m) - this._twistXInv(x - eps, py, depth, m)) / (2 * eps);
+      x -= clamp(fx / Math.max(0.15, df), -MM.bodyR * 0.35, MM.bodyR * 0.35);
+    }
+    return x;
+  }
+
+  _cylUsInv(u, v, L, k, key) {
+    const H0 = this.P.head;
+    const R = H0.radius || 300;
+    let a = k.turn || 0;
+    if (L.jaw) {
+      const q0 = Math.asin(clamp(u / R, -0.999, 0.999));
+      const u0 = R * Math.sin(q0 - a * Math.cos(q0));
+      const nr = clamp(1 + Math.sign(key.angle || 0) * u0 / (H0.jawNear || 150), 0, 1);
+      a *= 1 + (key.jaw || 0) * Math.pow(clamp(v / (H0.chin || 200), 0, 1), 2) * nr;
+    } else if (!L.noFade) {
+      a *= clamp(((H0.neck || 300) - v) / Math.max(1, (H0.neck || 300) - (H0.chin || 200)), 0, 1);
+    }
+    const q = Math.asin(clamp(u / R, -0.999, 0.999));
+    let us = Math.abs(u) < R ? R * Math.sin(q - a * Math.cos(q)) : u;
+    if (L.jaw && key.chin) {
+      const ca = key.chinAt || H0.centre;
+      const cw = H0.chinWide || [35, 80, 25];
+      const cv = (ca[0] - H0.centre[0]) * H0.ev[0] + (ca[1] - H0.centre[1]) * H0.ev[1];
+      const cu = (ca[0] - H0.centre[0]) * H0.eu[0] + (ca[1] - H0.centre[1]) * H0.eu[1];
+      const d = us - cu;
+      us -= key.chin
+        * Math.pow(clamp((v - cv + cw[0]) / cw[0], 0, 1), 2)
+        * clamp(1 - (v - cv) / cw[2], 0, 1)
+        * clamp(1 - Math.abs(d) / cw[1], 0, 1) * d;
+    }
+    return us;
+  }
+
+  _cylInv(p, L, k, key) {
+    if (!k.turn && !(L.jaw && key.chin)) return p;
+    const H0 = this.P.head;
+    const dx = p[0] - H0.centre[0], dy = p[1] - H0.centre[1];
+    const u = dx * H0.eu[0] + dy * H0.eu[1];
+    const v = dx * H0.ev[0] + dy * H0.ev[1];
+    const us = this._cylUsInv(u, v, L, k, key);
+    return [H0.centre[0] + us * H0.eu[0] + v * H0.ev[0], H0.centre[1] + us * H0.eu[1] + v * H0.ev[1]];
+  }
+
+  _cylFwd(p, L, k, key) {
+    // Support legacy call signature _cylFwd(p, a) from _stepChains AND new _cylFwd(p, L, k, key)
+    if (typeof L === "number") {
+      const a = L;
+      const H = this.P.head;
+      const dx = p[0] - H.centre[0], dy = p[1] - H.centre[1];
+      const u = dx * H.eu[0] + dy * H.eu[1], v = dx * H.ev[0] + dy * H.ev[1];
+      if (Math.abs(u) >= H.radius) return p;
+      const q = Math.asin(clamp(u / H.radius, -0.999, 0.999));
+      const u2 = H.radius * Math.sin(q + a * Math.cos(q));
+      return [H.centre[0] + u2 * H.eu[0] + v * H.ev[0], H.centre[1] + u2 * H.eu[1] + v * H.ev[1]];
+    }
+    if (!k.turn && !(L.jaw && key.chin)) return p;
+    const H0 = this.P.head;
+    const R = H0.radius || 300;
+    const dx = p[0] - H0.centre[0], dy = p[1] - H0.centre[1];
+    const usTgt = dx * H0.eu[0] + dy * H0.eu[1];
+    const v = dx * H0.ev[0] + dy * H0.ev[1];
+    if (Math.abs(usTgt) >= R && !(L.jaw && key.chin)) return p;
+    // Exact 1D Newton inversion of _cylUsInv(u, v) = usTgt
+    let u = clamp(usTgt, -R * 0.985, R * 0.985);
+    for (let it = 0; it < 8; it++) {
+      const f = this._cylUsInv(u, v, L, k, key) - usTgt;
+      if (Math.abs(f) < 1e-4) break;
+      const eps = 0.25;
+      const df = (this._cylUsInv(clamp(u + eps, -R * 0.998, R * 0.998), v, L, k, key)
+                - this._cylUsInv(clamp(u - eps, -R * 0.998, R * 0.998), v, L, k, key)) / (2 * eps);
+      u = clamp(u - clamp(f / Math.max(0.12, df), -R * 0.35, R * 0.35), -R * 0.995, R * 0.995);
+    }
+    return [H0.centre[0] + u * H0.eu[0] + v * H0.ev[0], H0.centre[1] + u * H0.eu[1] + v * H0.ev[1]];
+  }
+
+  _chainShiftAt(p, L) {
+    if (!this.physics.enabled || !L.chains || !L.chains.length || !this.CH.length) return [0, 0];
+    const sigma = L.chainSigma || 160;
+    const inv2s2 = 0.5 / (sigma * sigma);
+    let mvx = 0, mvy = 0, gs = 0;
+    for (let ci = 0; ci < Math.min(8, L.chains.length); ci++) {
+      const c = this.CH[L.chains[ci]];
+      if (!c || c.n < 2) continue;
+      let ax = c.J[0], ay = c.J[1], dax = c.d[0], day = c.d[1];
+      let best = 1e20, bdx = 0, bdy = 0;
+      for (let j = 1; j < c.n; j++) {
+        const bx = c.J[2 * j], by = c.J[2 * j + 1];
+        const dbx = c.d[2 * j], dby = c.d[2 * j + 1];
+        const vx = bx - ax, vy = by - ay;
+        const vv = vx * vx + vy * vy || 1e-6;
+        const t = clamp(((p[0] - ax) * vx + (p[1] - ay) * vy) / vv, 0, 1);
+        const ex = p[0] - ax - t * vx, ey = p[1] - ay - t * vy;
+        const d2 = ex * ex + ey * ey;
+        if (d2 < best) {
+          best = d2;
+          bdx = dax + (dbx - dax) * t;
+          bdy = day + (dby - day) * t;
+        }
+        ax = bx; ay = by; dax = dbx; day = dby;
+      }
+      const g = Math.exp(-best * inv2s2);
+      mvx += g * bdx; mvy += g * bdy; gs += g;
+    }
+    if (gs <= 1e-6) return [0, 0];
+    const w = clamp(gs / 0.15, 0, 1) / gs;
+    return [mvx * w, mvy * w];
+  }
+
+  /**
+   * Transform a point from screen/canonical viewport coords -> layer pre-affine space (exact shaders.js inverse!).
+   */
+  screenToLayerCanon(layerIdx, pt, frame = null) {
+    const P = this.P;
+    const fr = frame || this.lastFrame;
+    if (!P || !fr) return [pt[0], pt[1]];
+    const L = P.layers[layerIdx], k = fr.key?.layers?.[layerIdx];
+    if (!L || !k) return [pt[0], pt[1]];
+    const m = fr.m, MM = P.motion, H0 = P.head;
+    const kind = L.kind || 0;
+    let p = [pt[0] - (m.lean || 0) * ((MM.footY || 0) - pt[1]), pt[1] - (m.bounce || 0)];
+
+    if (kind !== 6 && kind !== 5) {
+      if (m.sway) p = this._rotGLSL(p, MM.waist, -m.sway);
+      if (m.breath && m.breath !== 1) p = [p[0], MM.waist[1] + (p[1] - MM.waist[1]) / m.breath];
+      if (kind === 1) {
+        const bd = L.bodyDepth ?? 1;
+        const d = Array.isArray(bd) ? lerp(bd[0], 1, this._smoothstep(bd[1], bd[2], p[1])) : bd;
+        p = [this._twistXInv(p[0], p[1], d, m), p[1]];
+      } else if (kind === 2 || kind === 3) {
+        const arm = kind === 2 ? "armR" : "armL";
+        const sh = MM.shoulder?.[arm], sf = MM.seam?.[arm];
+        if (sh && sf && m.body) {
+          const dx = p[0] - sh[0], dy = p[1] - sh[1];
+          const s = dx * sf[0] + dy * sf[1], t = dx * sf[1] - dy * sf[0];
+          let kk = clamp((s - sf[3] - (sf[5] - sf[3]) * Math.max((t - sf[2]) / ((sf[4] - sf[2]) || 1), 0)) / (MM.sew ?? 160), 0, 1);
+          kk = kk * kk * (3 - 2 * kk);
+          p = [lerp(this._twistXInv(p[0], p[1], 1.0, m), p[0], kk), p[1]];
+        }
+      } else {
+        const roll = (MM.roll0 || 0) + (m.roll || 0);
+        if (roll) p = this._rotGLSL(p, H0.pivot, -roll);
+      }
+    }
+
+    if (kind === 0 && L.head) {
+      const [pDy, pSy] = this._pitchParams(this._pitchGroup(L.id), m.pitch || 0);
+      if (pDy !== 0 || pSy !== 1) {
+        const dx = p[0] - H0.centre[0], dy = p[1] - H0.centre[1];
+        const pu = dx * H0.eu[0] + dy * H0.eu[1];
+        const pv = (dx * H0.ev[0] + dy * H0.ev[1] - pDy) / pSy;
+        p = [H0.centre[0] + pu * H0.eu[0] + pv * H0.ev[0], H0.centre[1] + pu * H0.eu[1] + pv * H0.ev[1]];
+      }
+      p = this._cylInv(p, L, k, fr.key);
+    }
+
+    if (L.chains && L.chains.length && this.CH.length && this.physics.enabled) {
+      const sh = this._chainShiftAt(p, L);
+      p = [p[0] - sh[0], p[1] - sh[1]];
+    }
+    return p;
+  }
+
+  /**
+   * Transform a point from layer pre-affine space -> screen/canonical viewport coords (exact shaders.js forward!).
+   */
+  layerToScreenCanon(layerIdx, pt, frame = null) {
+    const P = this.P;
+    const fr = frame || this.lastFrame;
+    if (!P || !fr) return [pt[0], pt[1]];
+    const L = P.layers[layerIdx], k = fr.key?.layers?.[layerIdx];
+    if (!L || !k) return [pt[0], pt[1]];
+    const m = fr.m, MM = P.motion, H0 = P.head;
+    const kind = L.kind || 0;
+    let p = [pt[0], pt[1]];
+
+    // 1. Forward spring chain shift: solve q - chainShift(q) = p
+    if (L.chains && L.chains.length && this.CH.length && this.physics.enabled) {
+      let q = [p[0], p[1]];
+      for (let it = 0; it < 5; it++) {
+        const sh = this._chainShiftAt(q, L);
+        q = [p[0] + sh[0], p[1] + sh[1]];
+      }
+      p = q;
+    }
+
+    // 2. Forward head cylinder turn + pitch
+    if (kind === 0 && L.head) {
+      p = this._cylFwd(p, L, k, fr.key);
+      const [pDy, pSy] = this._pitchParams(this._pitchGroup(L.id), m.pitch || 0);
+      if (pDy !== 0 || pSy !== 1) {
+        const dx = p[0] - H0.centre[0], dy = p[1] - H0.centre[1];
+        const pu = dx * H0.eu[0] + dy * H0.eu[1];
+        const pv = (dx * H0.ev[0] + dy * H0.ev[1]) * pSy + pDy;
+        p = [H0.centre[0] + pu * H0.eu[0] + pv * H0.ev[0], H0.centre[1] + pu * H0.eu[1] + pv * H0.ev[1]];
+      }
+    }
+
+    // 3. Forward roll, torso twist, breath, sway
+    if (kind !== 6 && kind !== 5) {
+      if (kind === 1) {
+        const bd = L.bodyDepth ?? 1;
+        const d = Array.isArray(bd) ? lerp(bd[0], 1, this._smoothstep(bd[1], bd[2], p[1])) : bd;
+        p = [this._twistXFwd(p[0], p[1], d, m), p[1]];
+      } else if (kind === 2 || kind === 3) {
+        const arm = kind === 2 ? "armR" : "armL";
+        const sh = MM.shoulder?.[arm], sf = MM.seam?.[arm];
+        if (sh && sf && m.body) {
+          let x = p[0];
+          for (let it = 0; it < 5; it++) {
+            const dx = x - sh[0], dy = p[1] - sh[1];
+            const s = dx * sf[0] + dy * sf[1], t = dx * sf[1] - dy * sf[0];
+            let kk = clamp((s - sf[3] - (sf[5] - sf[3]) * Math.max((t - sf[2]) / ((sf[4] - sf[2]) || 1), 0)) / (MM.sew ?? 160), 0, 1);
+            kk = kk * kk * (3 - 2 * kk);
+            const fx = lerp(this._twistXInv(x, p[1], 1.0, m), x, kk) - p[0];
+            x -= fx;
+          }
+          p = [x, p[1]];
+        }
+      } else {
+        const roll = (MM.roll0 || 0) + (m.roll || 0);
+        if (roll) p = this._rotGLSL(p, H0.pivot, roll);
+      }
+      if (m.breath && m.breath !== 1) p = [p[0], MM.waist[1] + (p[1] - MM.waist[1]) * m.breath];
+      if (m.sway) p = this._rotGLSL(p, MM.waist, m.sway);
+    }
+
+    // 4. Forward bounce & lean
+    const y = p[1] + (m.bounce || 0);
+    return [p[0] + (m.lean || 0) * ((MM.footY || 0) - y), y];
+  }
+
+  /**
+   * Return live transformed screen/canonical joint positions for spring chain ci
+   * (follows head turn/pitch/roll + live spring physics!).
+   */
+  getChainLivePoints(ci, frame = null) {
+    const P = this.P;
+    const c = this.CH[ci];
+    if (!P || !c) return [];
+    const fr = frame || this.lastFrame;
+    const m = fr ? fr.m : { a: 0, pitch: 0, roll: 0, sway: 0, lean: 0, breath: 1, body: 0, bounce: 0 };
+    if (this.physics.enabled && c.x && c.x.length === c.J.length) {
+      const pts = [];
+      for (let i = 0; i < c.n; i++) pts.push([c.x[2 * i], c.x[2 * i + 1]]);
+      return pts;
+    }
+    const turn = P.head.turn;
+    const roll = (P.motion.roll0 || 0) + (m.roll || 0);
+    const pts = [];
+    for (let i = 0; i < c.n; i++) {
+      let p = [c.J[2 * i], c.J[2 * i + 1]];
+      if (c.parent === "head") {
+        const a = Math.abs(m.a) * (m.a < 0 ? turn.R : turn.L) * (c.depth ?? 1);
+        p = this._cylFwd(p, a);
+        p = this._pitchFwd(p, m.pitch || 0, c.pitchGroup || "face");
+        if (roll) p = this._rotGLSL(p, P.head.pivot, roll);
+        if (m.sway) p = this._rotGLSL(p, P.motion.waist, m.sway);
+        p = this._hipsFwd(p, m);
+      } else if (c.parent === "hips") {
+        p = this._hipsFwd(p, m);
+      } else {
+        if (m.sway) p = this._rotGLSL(p, P.motion.waist, m.sway);
+        p = this._hipsFwd(p, m);
+      }
+      pts.push(p);
+    }
+    return pts;
   }
 
   keyAt(a, exactIdx = null) {
@@ -519,17 +885,21 @@ export class Layer2DEngine {
       if (c.parent === "head") {
         const a = Math.abs(m.a) * (m.a < 0 ? turn.R : turn.L) * (c.depth ?? 1);
         const pg = c.pitchGroup || "face";
-        fwd = (p) => this._torsoFwd(rotP(this._pitchFwd(this._cylFwd(p, a), m.pitch || 0, pg), P.head.pivot, roll0 + (m.roll || 0)), m);
+        fwd = (p) => this._hipsFwd(
+          this._rotGLSL(this._rotGLSL(this._pitchFwd(this._cylFwd(p, a), m.pitch || 0, pg), P.head.pivot, roll0 + (m.roll || 0)), P.motion.waist, m.sway || 0),
+          m,
+        );
       } else if (c.parent === "hips") {
         fwd = (p) => this._hipsFwd(p, m);
       } else {
-        fwd = (p) => this._torsoFwd(p, m);
+        fwd = (p) => this._hipsFwd(this._rotGLSL(p, P.motion.waist, m.sway || 0), m);
       }
       for (let i = 0; i < A.length; i += 2) T0.set(fwd([A[i], A[i + 1]]), i);
 
       // Tail uses smooth pelvis pendulum transform in _drawLayer
       if (P.tail && c.name === "wolf_tail") {
-        if (!c.x) { c.x = Float64Array.from(T0); c.v = new Float64Array(T0.length); }
+        c.x = Float64Array.from(T0);
+        if (!c.v || c.v.length !== T0.length) c.v = new Float64Array(T0.length);
         c.d.fill(0);
         continue;
       }
@@ -688,7 +1058,9 @@ export class Layer2DEngine {
     const P = this.P;
     if (!this.ready || !P) return;
 
-    const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+    const targetFb = opts.targetFb || null;
+    const W = targetFb ? opts.targetW : gl.drawingBufferWidth;
+    const H = targetFb ? opts.targetH : gl.drawingBufferHeight;
     if (W < 2 || H < 2) return;
 
     if (dt > 0) this.simT += Math.min(dt, 0.05);
@@ -697,29 +1069,18 @@ export class Layer2DEngine {
     const sc = Math.min(W / Math.max(1, vx1 - vx0), H / Math.max(1, vy1 - vy0));
     const cx = (vx0 + vx1) * 0.5, cy = (vy0 + vy1) * 0.5;
     const hw = W / sc / 2, hh = H / sc / 2;
-    const vw = this.lastView = [cx - hw, cy - hh, cx + hw, cy + hh];
+    const vw = [cx - hw, cy - hh, cx + hw, cy + hh];
+    if (!targetFb) this.lastView = vw;
 
-    const m = {
-      a: params.a || 0,
-      pitch: params.pitch || 0,
-      roll: params.roll || 0,
-      sway: params.bodySway || 0,
-      lean: params.bodyLean || 0,
-      breath: 1.0 + (params.breath || 0),
-      body: (params.a || 0) * ((P.motion.bodyFollow && P.motion.bodyFollow[0]) || 0),
-      bounce: 0,
-      tailWag: params.tailWag ?? 1.0,
-      tailPhaseOffset: params.tailSway || 0,
-    };
+    const m = this._buildMotionState(params);
 
     if (dt > 0) this._stepChains(m, Math.min(dt, 0.033));
 
     gl.useProgram(this.prog);
     gl.bindVertexArray(this.vao);
-    const U = this.U;
 
     const clearCol = opts.transparent ? [0, 0, 0, 0] : (opts.bgColor || [0.047, 0.051, 0.063, 1.0]);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFb);
     gl.viewport(0, 0, W, H);
     gl.clearColor(clearCol[0], clearCol[1], clearCol[2], clearCol[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -731,14 +1092,14 @@ export class Layer2DEngine {
       if (si > 0) ghosts.push({ idx: si - 1, op: 0.22 });
       if (si + 1 < P.samples.length) ghosts.push({ idx: si + 1, op: 0.22 });
       for (const gh of ghosts) {
-        this._drawPass(m, params, vw, sc, W, H, gh.idx, opts.hiddenIds, opts.soloId, gh.op);
+        this._drawPass(m, params, vw, sc, W, H, gh.idx, opts.hiddenIds, opts.soloId, gh.op, targetFb);
       }
     }
 
-    this._drawPass(m, params, vw, sc, W, H, opts.snapSampleIdx ?? null, opts.hiddenIds, opts.soloId, 1.0);
+    this._drawPass(m, params, vw, sc, W, H, opts.snapSampleIdx ?? null, opts.hiddenIds, opts.soloId, 1.0, targetFb);
   }
 
-  _drawPass(m, params, vw, sc, W, H, exactIdx, hiddenIds, soloId, passOp) {
+  _drawPass(m, params, vw, sc, W, H, exactIdx, hiddenIds, soloId, passOp, targetFb = null) {
     const gl = this.gl;
     const P = this.P;
     const U = this.U;
@@ -793,6 +1154,9 @@ export class Layer2DEngine {
     gl.uniform1f(U.uTime, this.simT);
 
     const fc = this._evalFace(params);
+    if (!targetFb && passOp >= 0.99) {
+      this.lastFrame = { m, key, fc, exactIdx };
+    }
     const eyes = this._eyeState(fc.eyes, fc.gaze);
     const after = { ...fc.after };
     for (const s of ["R", "L"]) {
@@ -1048,10 +1412,10 @@ export class Layer2DEngine {
       }
     }
 
-    // 2. Render visible layers onto screen framebuffer
+    // 2. Render visible layers onto destination framebuffer (screen or offscreen FBO)
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFb);
     gl.viewport(0, 0, W, H);
 
     const over = fc.over || {};
@@ -1077,10 +1441,11 @@ export class Layer2DEngine {
   /**
    * Alpha-accurate layer picking in canonical canvas coordinates (top-most opaque pixel wins!).
    */
-  pickLayerAt(canonX, canonY, a = 0, exactIdx = null, hiddenIds = null, soloId = null, wear = null) {
+  pickLayerAt(canonX, canonY, a = 0, exactIdx = null, hiddenIds = null, soloId = null, wear = null, params = null) {
     const P = this.P;
     if (!P) return -1;
-    const key = this.keyAt(a, exactIdx);
+    const fr = params ? this.syncFrameState(params, exactIdx) : (this.lastFrame || { m: { a, pitch: 0, roll: 0, sway: 0, lean: 0, breath: 1, body: 0, bounce: 0, tailWag: 1, tailPhaseOffset: 0 }, key: this.keyAt(a, exactIdx), fc: { hide: new Set(), move: {} }, exactIdx });
+    const key = fr.key;
     const hiddenByOutfit = new Set();
     for (const [g, o] of Object.entries(P.outfits || {})) {
       const w = wear && g in wear ? wear[g] : (o.default === false ? 0 : 1);
@@ -1093,9 +1458,12 @@ export class Layer2DEngine {
       if (soloId && L.id !== soloId) continue;
       if (hiddenIds && hiddenIds.has(L.id)) continue;
       if (hiddenByOutfit.has(L.id)) continue;
+      if (fr.fc?.hide?.has(L.id)) continue;
 
-      const Ai = inv2(k.A);
-      const dx = canonX - k.t[0], dy = canonY - k.t[1];
+      const pose = this._effectiveLayerPose(i, key, fr.m, fr.fc);
+      const pLayer = this.screenToLayerCanon(i, [canonX, canonY], fr);
+      const Ai = inv2(pose.A);
+      const dx = pLayer[0] - pose.t[0], dy = pLayer[1] - pose.t[1];
       let gx = (Ai[0] * dx + Ai[1] * dy) / (L.w * 0.5);
       let gy = (Ai[2] * dx + Ai[3] * dy) / (L.h * 0.5);
       if (k.D && k.D.length) {
@@ -1114,57 +1482,158 @@ export class Layer2DEngine {
     return -1;
   }
 
+  _ensureOffscreenFbo(w, h) {
+    const gl = this.gl;
+    w = Math.max(1, Math.round(w));
+    h = Math.max(1, Math.round(h));
+    if (this._offFbo && this._offFbo.w === w && this._offFbo.h === h) return this._offFbo;
+    if (!this._offFbo) {
+      this._offFbo = { fb: gl.createFramebuffer(), tex: gl.createTexture(), w: 0, h: 0 };
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this._offFbo.tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._offFbo.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._offFbo.tex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this._offFbo.w = w;
+    this._offFbo.h = h;
+    return this._offFbo;
+  }
+
+  _readOffscreenToCanvas(fb, w, h) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    const c2 = this._offCanvas || (this._offCanvas = document.createElement("canvas"));
+    if (c2.width !== w || c2.height !== h) { c2.width = w; c2.height = h; }
+    const ctx2 = c2.getContext("2d");
+    const imgData = ctx2.createImageData(w, h);
+    const dst = imgData.data;
+    const rowBytes = w * 4;
+    for (let y = 0; y < h; y++) {
+      const srcOff = (h - 1 - y) * rowBytes;
+      const dstOff = y * rowBytes;
+      for (let x = 0; x < rowBytes; x += 4) {
+        const a = px[srcOff + x + 3];
+        if (a === 255) {
+          dst[dstOff + x] = px[srcOff + x];
+          dst[dstOff + x + 1] = px[srcOff + x + 1];
+          dst[dstOff + x + 2] = px[srcOff + x + 2];
+          dst[dstOff + x + 3] = 255;
+        } else if (a > 0) {
+          const inv = 255 / a;
+          dst[dstOff + x] = Math.min(255, Math.round(px[srcOff + x] * inv));
+          dst[dstOff + x + 1] = Math.min(255, Math.round(px[srcOff + x + 1] * inv));
+          dst[dstOff + x + 2] = Math.min(255, Math.round(px[srcOff + x + 2] * inv));
+          dst[dstOff + x + 3] = a;
+        }
+      }
+    }
+    ctx2.putImageData(imgData, 0, 0);
+    return c2;
+  }
+
+  _resizeClipFbosOnly(w, h) {
+    const gl = this.gl;
+    for (const fb of Object.values(this.clipFbo)) {
+      gl.bindTexture(gl.TEXTURE_2D, fb.tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+  }
+
   /**
-   * Render a crisp face thumbnail dataURL for an expression card (restores viewport size cleanly).
+   * Render a crisp face thumbnail dataURL for an expression card (offscreen FBO — never clears main viewport!).
    */
   renderExpressionThumb(faceName, w = 136, h = 92) {
     return this.renderExpressionThumbBatch([faceName], w, h)[0] || "";
   }
 
   /**
-   * Render a batch of expression thumbnails with only ONE resize/FBO allocation round-trip.
+   * Render a batch of expression thumbnails into an offscreen WebGL2 FBO without resizing or clearing the main viewport.
    */
   renderExpressionThumbBatch(faceNames, w = 136, h = 92) {
     const P = this.P;
-    if (!P || !faceNames || !faceNames.length) return [];
-    const prevW = this.canvas.width, prevH = this.canvas.height;
+    if (!P || !this.ready || !faceNames || !faceNames.length) return [];
+    const gl = this.gl;
     const prevPhysics = this.physics.enabled;
-    this.physics.enabled = false;
-    this.resize(w, h);
-    const hc = P.head.centre, hr = P.head.radius;
-    const rect = [hc[0] - hr * 1.15, hc[1] - hr * 0.78, hc[0] + hr * 1.15, hc[1] + hr * 0.78];
+    const prevFace = this.lastFace;
+    const prevFaceSince = this.faceSince;
+    const prevFboW = this.fboW, prevFboH = this.fboH;
+    const grewClips = w > prevFboW || h > prevFboH;
     const out = [];
-    for (const faceName of faceNames) {
-      try {
-        this.render({ a: 0, pitch: 0, roll: 0, eyes: 1, face: faceName, wear: {} }, rect, 0, {
-          bgColor: [0.09, 0.10, 0.13, 1],
-        });
-        out.push(this.canvas.toDataURL("image/webp", 0.85));
-      } catch (err) {
-        console.warn("Expression thumb failed:", faceName, err);
-        out.push("");
+    try {
+      this.physics.enabled = false;
+      if (grewClips) this._resizeClipFbosOnly(Math.max(prevFboW, w), Math.max(prevFboH, h));
+      const off = this._ensureOffscreenFbo(w, h);
+      const hc = P.head.centre, hr = P.head.radius;
+      const rect = [hc[0] - hr * 1.15, hc[1] - hr * 0.78, hc[0] + hr * 1.15, hc[1] + hr * 0.78];
+      for (const faceName of faceNames) {
+        try {
+          this.render({ a: 0, pitch: 0, roll: 0, eyes: 1, face: faceName, wear: {} }, rect, 0, {
+            bgColor: [0.09, 0.10, 0.13, 1],
+            targetFb: off.fb,
+            targetW: w,
+            targetH: h,
+          });
+          const c2 = this._readOffscreenToCanvas(off.fb, w, h);
+          out.push(c2.toDataURL("image/webp", 0.85));
+        } catch (err) {
+          console.warn("Expression thumb failed:", faceName, err);
+          out.push("");
+        }
       }
+    } finally {
+      this.physics.enabled = prevPhysics;
+      this.lastFace = prevFace;
+      this.faceSince = prevFaceSince;
+      if (grewClips && prevFboW > 0 && prevFboH > 0) this._resizeClipFbosOnly(prevFboW, prevFboH);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
     }
-    this.physics.enabled = prevPhysics;
-    this.resize(prevW, prevH);
     return out;
   }
 
   /**
-   * Capture a transparent portrait PNG (Uint8Array) for preview.png inside exported .l2d bundles.
+   * Capture a transparent portrait PNG (Uint8Array) for preview.png inside exported .l2d bundles (offscreen FBO).
    */
   async capturePreviewPNG(w = 600, h = 800) {
     const P = this.P;
-    if (!P) return null;
-    const prevW = this.canvas.width, prevH = this.canvas.height;
+    if (!P || !this.ready) return null;
+    const gl = this.gl;
     const prevPhysics = this.physics.enabled;
-    this.physics.enabled = false;
-    this.resize(w, h);
-    const rect = (P.views && P.views.bust) || [0, 0, P.canvas[0], P.canvas[1]];
-    this.render({ a: 0, pitch: 0, roll: 0, eyes: 1, face: null, wear: {} }, rect, 0, { transparent: true });
-    const blob = await new Promise((resolve) => this.canvas.toBlob(resolve, "image/png"));
-    this.physics.enabled = prevPhysics;
-    this.resize(prevW, prevH);
+    const prevFace = this.lastFace;
+    const prevFaceSince = this.faceSince;
+    const prevFboW = this.fboW, prevFboH = this.fboH;
+    const grewClips = w > prevFboW || h > prevFboH;
+    let c2 = null;
+    try {
+      this.physics.enabled = false;
+      if (grewClips) this._resizeClipFbosOnly(Math.max(prevFboW, w), Math.max(prevFboH, h));
+      const off = this._ensureOffscreenFbo(w, h);
+      const rect = (P.views && P.views.bust) || [0, 0, P.canvas[0], P.canvas[1]];
+      this.render({ a: 0, pitch: 0, roll: 0, eyes: 1, face: null, wear: {} }, rect, 0, {
+        transparent: true,
+        targetFb: off.fb,
+        targetW: w,
+        targetH: h,
+      });
+      c2 = this._readOffscreenToCanvas(off.fb, w, h);
+    } finally {
+      this.physics.enabled = prevPhysics;
+      this.lastFace = prevFace;
+      this.faceSince = prevFaceSince;
+      if (grewClips && prevFboW > 0 && prevFboH > 0) this._resizeClipFbosOnly(prevFboW, prevFboH);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    }
+    const blob = c2 ? await new Promise((resolve) => c2.toBlob(resolve, "image/png")) : null;
     return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
   }
 }

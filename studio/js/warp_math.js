@@ -84,8 +84,10 @@ export function resampleGrid(oldD, oldGd, newGd) {
  * Compute visual canvas positions [x, y] of every lattice control node (ix, iy).
  * Because shader samples tex at g_tex = g_screen + D(g_screen), a texture node g0
  * appears visually at g_vis where g_vis + D(g_vis) ≈ g0.
+ * Optional `toScreenFn([cx, cy])` maps pre-cylinder layer coords -> live screen canonical coords
+ * (applying head cylinder turn, jaw, pitch, roll, body sway, and spring chains 1:1 with shaders.js!).
  */
-export function latticeCanvasPoints(layer, sampleLayer, displayGd = 5) {
+export function latticeCanvasPoints(layer, sampleLayer, displayGd = 5, toScreenFn = null) {
   const D = sampleLayer.D;
   const gd = D && D.length ? gridSizeOf(D) : displayGd;
   const A = sampleLayer.A || [1, 0, 0, 1];
@@ -99,8 +101,8 @@ export function latticeCanvasPoints(layer, sampleLayer, displayGd = 5) {
       const g0x = -1 + (2 * ix) / (gd - 1);
       let gx = g0x, gy = g0y;
       if (D && D.length) {
-        // Invert g + D(g) = g0 cleanly via 4 damped fixed-point iterations
-        for (let it = 0; it < 4; it++) {
+        // Invert g + D(g) = g0 cleanly via 6 damped fixed-point iterations
+        for (let it = 0; it < 6; it++) {
           const [dx, dy] = sampleD(D, gd, gx, gy);
           gx = g0x - dx;
           gy = g0y - dy;
@@ -109,20 +111,21 @@ export function latticeCanvasPoints(layer, sampleLayer, displayGd = 5) {
       const lx = gx * w2, ly = gy * h2;
       const cx = A[0] * lx + A[1] * ly + t[0];
       const cy = A[2] * lx + A[3] * ly + t[1];
-      pts.push({ ix, iy, gx, gy, x: cx, y: cy });
+      const sp = toScreenFn ? toScreenFn([cx, cy]) : [cx, cy];
+      pts.push({ ix, iy, gx, gy, lx: cx, ly: cy, x: sp[0], y: sp[1] });
     }
   }
   return { gd, pts };
 }
 
 /**
- * Drag a single lattice control node (ix, iy) by canonical canvas delta (dxCanon, dyCanon).
+ * Drag a single lattice control node (ix, iy) by layer-space delta (dxLayer, dyLayer).
  */
-export function dragLatticePoint(layer, sampleLayer, ix, iy, dxCanon, dyCanon, defaultGd = 5) {
+export function dragLatticePoint(layer, sampleLayer, ix, iy, dxLayer, dyLayer, defaultGd = 5) {
   const gd = gridSizeOf(sampleLayer.D) || defaultGd;
   const D = ensureGrid(sampleLayer, gd);
   const Ai = inv2(sampleLayer.A || [1, 0, 0, 1]);
-  const [dlx, dly] = mul2v(Ai, dxCanon, dyCanon);
+  const [dlx, dly] = mul2v(Ai, dxLayer, dyLayer);
   const dgx = dlx / (layer.w * 0.5);
   const dgy = dly / (layer.h * 0.5);
   const idx = (iy * gd + ix) * 2;
@@ -134,13 +137,28 @@ export function dragLatticePoint(layer, sampleLayer, ix, iy, dxCanon, dyCanon, d
 /**
  * Sculpting / Liquify Warp Brush directly modifying D[gd*gd*2].
  * mode: "push" | "smooth" | "restore"
+ * Optional `toScreenFn` & `toLayerFn` keep brush falloff in live screen-canonical space while
+ * applying exact inverse displacements in pre-cylinder layer space!
  */
-export function applyWarpBrush(layer, sampleLayer, pPrev, pCurr, radiusCanon, strength = 0.65, mode = "push", defaultGd = 7) {
+export function applyWarpBrush(
+  layer,
+  sampleLayer,
+  pPrev,
+  pCurr,
+  radiusCanon,
+  strength = 0.65,
+  mode = "push",
+  defaultGd = 7,
+  toScreenFn = null,
+  toLayerFn = null,
+) {
   const gd = gridSizeOf(sampleLayer.D) || defaultGd;
   const D = ensureGrid(sampleLayer, gd);
-  const { pts } = latticeCanvasPoints(layer, sampleLayer, gd);
+  const { pts } = latticeCanvasPoints(layer, sampleLayer, gd, toScreenFn);
   const Ai = inv2(sampleLayer.A || [1, 0, 0, 1]);
-  const dxC = pCurr[0] - pPrev[0], dyC = pCurr[1] - pPrev[1];
+  const lpPrev = toLayerFn ? toLayerFn(pPrev) : pPrev;
+  const lpCurr = toLayerFn ? toLayerFn(pCurr) : pCurr;
+  const dxC = lpCurr[0] - lpPrev[0], dyC = lpCurr[1] - lpPrev[1];
   const [dlx, dly] = mul2v(Ai, dxC, dyC);
   const dgx = dlx / (layer.w * 0.5);
   const dgy = dly / (layer.h * 0.5);

@@ -39,7 +39,11 @@ export class RightInspector {
     st.on("doc:loaded", () => this.render());
     st.on("mode:changed", () => this.render());
     st.on("selection:changed", () => this.render());
-    st.on("pack:mutated", () => this.render());
+    st.on("pack:mutated", (d) => {
+      if (d?.silentInspector) return;
+      if (document.activeElement && document.activeElement.type === "range" && this.bodyEl.contains(document.activeElement)) return;
+      this.render();
+    });
     st.on("params:changed", () => {
       if (st.mode !== "animate") this._refreshNumericFields();
     });
@@ -81,11 +85,28 @@ export class RightInspector {
   }
 
   _refreshNumericFields() {
-    // Lightweight refresh of numeric transform readouts during scrub without blowing away focus
-    if (document.activeElement && this.bodyEl.contains(document.activeElement)) return;
-    if (this.state.inspectorTab === "layer" || this.state.inspectorTab === "transform") {
-      this.render();
-    }
+    // Fast in-place update of live transform readouts during parameter scrubbing (zero DOM churn!)
+    const st = this.state;
+    if (st.inspectorTab !== "layer" && st.inspectorTab !== "transform") return;
+    const SL = st.selectedLayerIdx >= 0
+      ? (this.engine.getLiveSampleLayer(st.selectedLayerIdx, st.params, st.snapToKeyform ? st.activeSampleIdx : null) || st.getActiveSampleLayer())
+      : null;
+    if (!SL) return;
+    const dec = decomposeAffine(SL.A || [1, 0, 0, 1]);
+    const vals = {
+      tx: SL.t[0],
+      ty: SL.t[1],
+      sx: dec.sx,
+      sy: dec.sy,
+      rot: dec.rotDeg,
+      op: SL.op ?? 1,
+      turn: SL.turn || 0,
+    };
+    this.bodyEl.querySelectorAll("input[data-live-field]").forEach((inp) => {
+      if (document.activeElement === inp) return;
+      const k = inp.dataset.liveField;
+      if (k in vals) inp.value = String(Number(vals[k].toFixed(3)));
+    });
   }
 
   /* ---------- LAYER TAB (matching studio_concept_rigging.png!) ---------- */
@@ -169,12 +190,12 @@ export class RightInspector {
 
     const g2 = this._group();
     g2.append(
-      this._numRow("Position X", SL.t[0], -4000, 8000, 1, (v) => { st.pushUndo("Move X"); SL.t[0] = +v.toFixed(2); st.emit("pack:mutated"); }),
-      this._numRow("Position Y", SL.t[1], -4000, 8000, 1, (v) => { st.pushUndo("Move Y"); SL.t[1] = +v.toFixed(2); st.emit("pack:mutated"); }),
-      this._numRow("Scale X", dec.sx, 0.05, 5, 0.01, (v) => { st.pushUndo("Scale X"); SL.A = composeAffine(v, dec.sy, dec.rotDeg); st.emit("pack:mutated"); }),
-      this._numRow("Scale Y", dec.sy, 0.05, 5, 0.01, (v) => { st.pushUndo("Scale Y"); SL.A = composeAffine(dec.sx, v, dec.rotDeg); st.emit("pack:mutated"); }),
-      this._numRow("Rotation", dec.rotDeg, -180, 180, 0.5, (v) => { st.pushUndo("Rotate"); SL.A = composeAffine(dec.sx, dec.sy, v); st.emit("pack:mutated"); }),
-      this._numRow("Opacity", SL.op ?? 1, 0, 1, 0.05, (v) => { st.pushUndo("Opacity"); SL.op = Math.max(0, Math.min(1, +v.toFixed(3))); st.emit("pack:mutated"); }),
+      this._numRow("Position X", SL.t[0], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move X"); st.getActiveSampleLayer().t[0] = +v.toFixed(2); st.emit("pack:mutated"); }, "tx"),
+      this._numRow("Position Y", SL.t[1], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move Y"); st.getActiveSampleLayer().t[1] = +v.toFixed(2); st.emit("pack:mutated"); }, "ty"),
+      this._numRow("Scale X", dec.sx, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale X"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(v, d.sy, d.rotDeg); st.emit("pack:mutated"); }, "sx"),
+      this._numRow("Scale Y", dec.sy, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale Y"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, v, d.rotDeg); st.emit("pack:mutated"); }, "sy"),
+      this._numRow("Rotation", dec.rotDeg, -180, 180, 0.5, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Rotate"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, d.sy, v); st.emit("pack:mutated"); }, "rot"),
+      this._numRow("Opacity", SL.op ?? 1, 0, 1, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Opacity"); st.getActiveSampleLayer().op = Math.max(0, Math.min(1, +v.toFixed(3))); st.emit("pack:mutated"); }, "op"),
     );
 
     const g3 = this._group();
@@ -232,12 +253,12 @@ export class RightInspector {
 
     const g1 = this._group();
     g1.append(
-      this._numRow("Position X", SL.t[0], -4000, 8000, 1, (v) => { st.pushUndo("Move X"); SL.t[0] = +v.toFixed(2); st.emit("pack:mutated"); }),
-      this._numRow("Position Y", SL.t[1], -4000, 8000, 1, (v) => { st.pushUndo("Move Y"); SL.t[1] = +v.toFixed(2); st.emit("pack:mutated"); }),
-      this._numRow("Scale X", dec.sx, 0.05, 5, 0.01, (v) => { st.pushUndo("Scale X"); SL.A = composeAffine(v, dec.sy, dec.rotDeg); st.emit("pack:mutated"); }),
-      this._numRow("Scale Y", dec.sy, 0.05, 5, 0.01, (v) => { st.pushUndo("Scale Y"); SL.A = composeAffine(dec.sx, v, dec.rotDeg); st.emit("pack:mutated"); }),
-      this._numRow("Rotation °", dec.rotDeg, -180, 180, 0.5, (v) => { st.pushUndo("Rotate"); SL.A = composeAffine(dec.sx, dec.sy, v); st.emit("pack:mutated"); }),
-      this._numRow("Cylinder Turn", SL.turn || 0, -0.5, 0.5, 0.01, (v) => { st.pushUndo("Layer Turn"); SL.turn = +v.toFixed(4); st.emit("pack:mutated"); }),
+      this._numRow("Position X", SL.t[0], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move X"); st.getActiveSampleLayer().t[0] = +v.toFixed(2); st.emit("pack:mutated"); }, "tx"),
+      this._numRow("Position Y", SL.t[1], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move Y"); st.getActiveSampleLayer().t[1] = +v.toFixed(2); st.emit("pack:mutated"); }, "ty"),
+      this._numRow("Scale X", dec.sx, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale X"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(v, d.sy, d.rotDeg); st.emit("pack:mutated"); }, "sx"),
+      this._numRow("Scale Y", dec.sy, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale Y"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, v, d.rotDeg); st.emit("pack:mutated"); }, "sy"),
+      this._numRow("Rotation °", dec.rotDeg, -180, 180, 0.5, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Rotate"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, d.sy, v); st.emit("pack:mutated"); }, "rot"),
+      this._numRow("Cylinder Turn", SL.turn || 0, -0.5, 0.5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Layer Turn"); st.getActiveSampleLayer().turn = +v.toFixed(4); st.emit("pack:mutated"); }, "turn"),
       this._numRow("Quad Margin", L.pad || 320, 40, 900, 20, (v) => { st.pushUndo("Layer Pad"); L.pad = Math.max(40, Math.round(v)); st.emit("pack:mutated"); }),
     );
 
@@ -277,8 +298,8 @@ export class RightInspector {
         ["smooth", "Smooth"],
         ["restore", "Restore / Erase"],
       ], (v) => { st.brush.mode = v; }),
-      this._sliderRow("Brush Radius", st.brush.radius, 20, 320, 4, (v) => { st.brush.radius = v; }, (v) => `${Math.round(v)}px`),
-      this._sliderRow("Brush Strength", st.brush.strength, 0.1, 1.0, 0.05, (v) => { st.brush.strength = v; }, (v) => v.toFixed(2)),
+      this._sliderRow("Brush Radius", st.brush.radius, 20, 320, 1, (v) => { st.brush.radius = v; }, (v) => `${Math.round(v)}px`),
+      this._sliderRow("Brush Strength", st.brush.strength, 0.05, 1.0, 0.01, (v) => { st.brush.strength = v; }, (v) => v.toFixed(2)),
       this._selectRow("Warp Grid", String(gd), [["3", "3×3 (9 pts)"], ["5", "5×5 (25 pts)"], ["7", "7×7 (49 pts)"], ["9", "9×9 (81 pts)"], ["11", "11×11 (121 pts)"]], (v) => {
         st.pushUndo("Resample Warp Grid");
         const ng = Number(v);
@@ -334,9 +355,9 @@ export class RightInspector {
         this._selectRow("Parent Bone", ch.parent || "head", [["head", "Head"], ["body", "Torso"], ["hips", "Hips"], ["armR", "Arm R"], ["armL", "Arm L"]], (v) => {
           st.pushUndo("Chain Parent"); ch.parent = v; st.emit("pack:mutated", { structural: true });
         }),
-        this._sliderRow("Root Stiff (k0)", ch.k[0], 0.05, 1.5, 0.02, (v) => { ch.k[0] = +v.toFixed(3); this.engine.syncPack(); }, (v) => v.toFixed(2)),
-        this._sliderRow("Tip Stiff (k1)", ch.k[1], 0.02, 1.2, 0.02, (v) => { ch.k[1] = +v.toFixed(3); this.engine.syncPack(); }, (v) => v.toFixed(2)),
-        this._sliderRow("Damping", ch.damp, 0.02, 1.0, 0.02, (v) => { ch.damp = +v.toFixed(3); this.engine.syncPack(); }, (v) => v.toFixed(2)),
+        this._sliderRow("Root Stiff (k0)", ch.k[0], 0.05, 1.5, 0.01, (v) => { ch.k[0] = +v.toFixed(3); this.engine.syncPack(); }, (v) => v.toFixed(2)),
+        this._sliderRow("Tip Stiff (k1)", ch.k[1], 0.02, 1.2, 0.01, (v) => { ch.k[1] = +v.toFixed(3); this.engine.syncPack(); }, (v) => v.toFixed(2)),
+        this._sliderRow("Damping", ch.damp, 0.02, 1.0, 0.01, (v) => { ch.damp = +v.toFixed(3); this.engine.syncPack(); }, (v) => v.toFixed(2)),
       );
       const jRow = document.createElement("div"); jRow.className = "prop-btn-row";
       jRow.append(
@@ -385,8 +406,8 @@ export class RightInspector {
     const pHead = document.createElement("div"); pHead.className = "subhead"; pHead.textContent = "SIMULATION";
     g3.append(
       pHead,
-      this._sliderRow("Wind", this.engine.physics.wind, -1.5, 1.5, 0.05, (v) => { this.engine.physics.wind = v; }, (v) => v.toFixed(2)),
-      this._sliderRow("Gravity", this.engine.physics.gravity, 0.0, 2.0, 0.05, (v) => { this.engine.physics.gravity = v; }, (v) => v.toFixed(2)),
+      this._sliderRow("Wind", this.engine.physics.wind, -1.5, 1.5, 0.01, (v) => { this.engine.physics.wind = v; }, (v) => v.toFixed(2)),
+      this._sliderRow("Gravity", this.engine.physics.gravity, 0.0, 2.0, 0.01, (v) => { this.engine.physics.gravity = v; }, (v) => v.toFixed(2)),
       this._actionBtn("Trigger Shake Impulse", () => this.onAction("physics-impulse"), true),
     );
     this.bodyEl.append(g1, g2, g3);
@@ -429,9 +450,9 @@ export class RightInspector {
       );
       const curEyes = Array.isArray(F.eyes) ? F.eyes[0] : (typeof F.eyes === "number" ? F.eyes : 1.0);
       g1.append(
-        this._sliderRow("Eye Openness", curEyes, 0, 1.3, 0.05, (v) => {
+        this._sliderRow("Eye Openness", curEyes, 0, 1.3, 0.01, (v) => {
           F.eyes = [+v.toFixed(2), +v.toFixed(2)];
-          st.emit("pack:mutated");
+          st.emit("pack:mutated", { silentInspector: true });
         }, (v) => v.toFixed(2)),
       );
 
@@ -551,9 +572,9 @@ export class RightInspector {
     const h2 = document.createElement("div"); h2.className = "subhead"; h2.textContent = "PHYSICS";
     g2.append(
       h2,
-      this._sliderRow("Spring", this.engine.physics.springScale, 0.2, 1.8, 0.05, (v) => { this.engine.physics.springScale = v; }, (v) => v.toFixed(2)),
-      this._sliderRow("Wind", this.engine.physics.wind, -1.0, 1.0, 0.05, (v) => { this.engine.physics.wind = v; }, (v) => v.toFixed(2)),
-      this._sliderRow("Gravity", this.engine.physics.gravity, 0.0, 2.0, 0.05, (v) => { this.engine.physics.gravity = v; }, (v) => v.toFixed(2)),
+      this._sliderRow("Spring", this.engine.physics.springScale, 0.2, 1.8, 0.01, (v) => { this.engine.physics.springScale = v; }, (v) => v.toFixed(2)),
+      this._sliderRow("Wind", this.engine.physics.wind, -1.0, 1.0, 0.01, (v) => { this.engine.physics.wind = v; }, (v) => v.toFixed(2)),
+      this._sliderRow("Gravity", this.engine.physics.gravity, 0.0, 2.0, 0.01, (v) => { this.engine.physics.gravity = v; }, (v) => v.toFixed(2)),
     );
 
     this.bodyEl.append(g1, g2);
@@ -665,12 +686,13 @@ export class RightInspector {
     return row;
   }
 
-  _numRow(label, value, min, max, step, onChange) {
+  _numRow(label, value, min, max, step, onChange, liveField = null) {
     const row = document.createElement("div"); row.className = "prop-row";
     const l = document.createElement("span"); l.className = "prop-lbl"; l.textContent = label;
     const inp = document.createElement("input");
     inp.className = "field-input mono";
     inp.type = "number";
+    if (liveField) inp.dataset.liveField = liveField;
     inp.min = String(min); inp.max = String(max); inp.step = String(step);
     inp.value = String(Number(value.toFixed(3)));
     inp.addEventListener("change", () => {
