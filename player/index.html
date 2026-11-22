@@ -2550,7 +2550,7 @@ async function start(l2dBuffer = null, l2dName = null) {
       const wantPause = Boolean(e.data.paused);
       if (wantPause) { paused = true; }
       else if (window.__ready && paused) {
-        paused = false; t0 = null;
+        paused = false; t0 = performance.now() / 1000 - simT;
         if (!loopRunning) { loopRunning = true; requestAnimationFrame(loop); }
       }
     });
