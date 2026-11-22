@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docs — Layer2D</title>
+  <meta name="description" content="Build, rig, pack and run .l2d avatars with or without Layer2D Studio, plus the AI agent authoring guide.">
+  <meta name="theme-color" content="#0c0d10">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" type="image/x-icon" href="favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="canonical" href="https://layer2d.com/docs.html">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body class="doc">
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="./"><img class="brand-mark" src="assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
+      <nav class="nav" aria-label="Primary">
+        <a href="format.html">Format</a>
+        <a href="studio/">Studio</a>
+        <a href="player/?model=test-signal.l2d">Player</a>
+        <a href="./#avatars">Avatars</a>
+        <a href="docs.html" aria-current="page">Docs</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <a class="btn btn-primary" href="player/?model=test-signal.l2d">Launch Player</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <div class="doc-head">
+        <h1>Docs</h1>
+      </div>
+      <div class="doc-layout">
+        <nav class="toc" aria-label="On this page">
+          <a href="#agent-kit">Agent skill &amp; kit</a>
+          <a href="#build-l2d">Build a .l2d</a>
+          <a href="#pack-schema">pack.json schema</a>
+          <a href="#agent-guide">Agent tips</a>
+          <a href="#studio">Studio</a>
+          <a href="#player">Player</a>
+          <a href="#obs">OBS</a>
+          <a href="#params">URL parameters</a>
+          <a href="#cli">CLI</a>
+        </nav>
+        <div class="doc-body">
+          <section id="agent-kit">
+            <h2>Agent skill &amp; downloadable testing kit</h2>
+            <p>AI coding agents and developers can download the self-contained testing kit (offline WebGL2 Player, zero-dependency validator CLI, starter builder, Playwright visual QA runner, and <code>SKILL.md</code>) and build + test <code>.l2d</code> avatars without Studio or cloning the repo.</p>
+            <div class="actions" style="display:flex;gap:12px;flex-wrap:wrap;margin:0 0 18px;">
+              <a class="btn btn-primary" href="downloads/layer2d-agent-kit.zip">Download Testing Kit (.zip)</a>
+              <a class="btn btn-ghost" href="skills/layer2d-avatar-builder/SKILL.md">Agent SKILL.md</a>
+              <a class="btn btn-ghost" href="agent-guide.md">Raw Markdown Guide</a>
+            </div>
+            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Download and unpack the offline agent testing kit</span><span class="ln">curl -fsSL https://layer2d.com/downloads/layer2d-agent-kit.zip -o layer2d-agent-kit.zip</span><span class="ln">unzip -o layer2d-agent-kit.zip -d layer2d-kit &amp;&amp; cd layer2d-kit</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 1. Build a valid .l2d bundle from scratch</span><span class="ln">python3 starter_builder.py starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 2. Validate archive paths, manifest stats, textures &amp; SHA-256 digests</span><span class="ln">python3 l2d_tools.py validate starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 3. Run offline WebGL2 Playwright QA (OBS alpha + wide/center turn sweeps + pitch + expressions)</span><span class="ln">python3 qa_runner.py starter.l2d --out qa_out/</span></code></pre>
+            <p>Install the skill directly into an agent workspace at <code>.agents/skills/layer2d-avatar-builder/SKILL.md</code> using <code>curl -fsSL https://layer2d.com/skills/layer2d-avatar-builder/SKILL.md</code>.</p>
+          </section>
+
+          <section id="build-l2d">
+            <h2>Build a .l2d from scratch (no Studio required)</h2>
+            <p>A <code>.l2d</code> file is a plain ZIP archive containing <code>layer2d.json</code>, <code>pack.json</code>, RGBA textures in <code>tex/</code>, and <code>SHA256SUMS.json</code>. You can build one directly with Python or JavaScript and drop it straight onto the <a href="player/?model=test-signal.l2d">Player</a> or <a href="studio/">Studio</a>.</p>
+            <p>Raw Markdown version for AI agents: <a href="agent-guide.md"><code>layer2d.com/agent-guide.md</code></a>.</p>
+
+            <h3>1. Required archive layout</h3>
+            <pre class="code"><code><span class="ln"><span class="tok-k">starter.l2d</span></span><span class="ln"><span class="tok-p">├─</span> layer2d.json       <span class="tok-p"># format: "layer2d/v1", canvas, stats, capabilities (ZIP_DEFLATED)</span></span><span class="ln"><span class="tok-p">├─</span> pack.json          <span class="tok-p"># runtime layers, yaw samples, physics, expressions (ZIP_DEFLATED)</span></span><span class="ln"><span class="tok-p">├─</span> tex/               <span class="tok-p"># RGBA .png or .webp textures (ZIP_STORED, uncompressed)</span></span><span class="ln"><span class="tok-p">│  ├─</span> H01.png</span><span class="ln"><span class="tok-p">│  ├─</span> B01.png</span><span class="ln"><span class="tok-p">│  ├─</span> F01.png</span><span class="ln"><span class="tok-p">│  └─</span> H03C.png</span><span class="ln"><span class="tok-p">├─</span> preview.png        <span class="tok-p"># optional portrait thumbnail (ZIP_STORED)</span></span><span class="ln"><span class="tok-p">└─</span> SHA256SUMS.json    <span class="tok-p"># SHA-256 hex digest for every other archive member (ZIP_DEFLATED)</span></span></code></pre>
+
+            <h3>2. Complete minimal Python builder</h3>
+            <p>Save as <code>make_starter.py</code> and run <code>python3 make_starter.py</code> (requires only <code>Pillow</code> to paint example PNGs, or load your own PNG/WebP layer cutouts). Drag <code>starter.l2d</code> onto <a href="player/?model=test-signal.l2d"><code>layer2d.com/player/</code></a> to run it immediately.</p>
+            <pre class="code"><code><span class="ln"><span class="tok-k">import</span> hashlib, io, json, math, zipfile</span><span class="ln"><span class="tok-k">from</span> datetime <span class="tok-k">import</span> datetime, timezone</span><span class="ln"><span class="tok-k">from</span> pathlib <span class="tok-k">import</span> Path</span><span class="ln"><span class="tok-k">from</span> PIL <span class="tok-k">import</span> Image, ImageDraw</span><span class="ln"></span><span class="ln"><span class="tok-k">def</span> png_bytes(im):</span><span class="ln">    b = io.BytesIO(); im.save(b, format=<span class="tok-s">"PNG"</span>); <span class="tok-k">return</span> b.getvalue()</span><span class="ln"></span><span class="ln"><span class="tok-p"># 1) Paint or load layer RGBA textures: (bytes, w, h, center_x, center_y) on 1200x2000 canvas</span></span><span class="ln">tex = {}</span><span class="ln">im = Image.new(<span class="tok-s">"RGBA"</span>, (<span class="tok-n">540</span>, <span class="tok-n">680</span>), (<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>)); ImageDraw.Draw(im).rounded_rectangle((<span class="tok-n">30</span>,<span class="tok-n">30</span>,<span class="tok-n">510</span>,<span class="tok-n">650</span>), <span class="tok-n">180</span>, fill=(<span class="tok-n">38</span>,<span class="tok-n">42</span>,<span class="tok-n">56</span>,<span class="tok-n">255</span>))</span><span class="ln">tex[<span class="tok-s">"H01"</span>]  = (png_bytes(im), <span class="tok-n">540</span>, <span class="tok-n">680</span>, <span class="tok-n">600.0</span>, <span class="tok-n">540.0</span>)</span><span class="ln">im = Image.new(<span class="tok-s">"RGBA"</span>, (<span class="tok-n">420</span>, <span class="tok-n">640</span>), (<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>)); ImageDraw.Draw(im).rounded_rectangle((<span class="tok-n">40</span>,<span class="tok-n">40</span>,<span class="tok-n">380</span>,<span class="tok-n">620</span>), <span class="tok-n">90</span>, fill=(<span class="tok-n">28</span>,<span class="tok-n">30</span>,<span class="tok-n">38</span>,<span class="tok-n">255</span>))</span><span class="ln">tex[<span class="tok-s">"B01"</span>]  = (png_bytes(im), <span class="tok-n">420</span>, <span class="tok-n">640</span>, <span class="tok-n">600.0</span>, <span class="tok-n">1080.0</span>)</span><span class="ln">im = Image.new(<span class="tok-s">"RGBA"</span>, (<span class="tok-n">360</span>, <span class="tok-n">420</span>), (<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>)); ImageDraw.Draw(im).ellipse((<span class="tok-n">20</span>,<span class="tok-n">15</span>,<span class="tok-n">340</span>,<span class="tok-n">395</span>), fill=(<span class="tok-n">252</span>,<span class="tok-n">232</span>,<span class="tok-n">222</span>,<span class="tok-n">255</span>))</span><span class="ln">tex[<span class="tok-s">"F01"</span>]  = (png_bytes(im), <span class="tok-n">360</span>, <span class="tok-n">420</span>, <span class="tok-n">600.0</span>, <span class="tok-n">490.0</span>)</span><span class="ln">im = Image.new(<span class="tok-s">"RGBA"</span>, (<span class="tok-n">420</span>, <span class="tok-n">240</span>), (<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>)); ImageDraw.Draw(im).polygon([(<span class="tok-n">30</span>,<span class="tok-n">190</span>),(<span class="tok-n">80</span>,<span class="tok-n">20</span>),(<span class="tok-n">340</span>,<span class="tok-n">20</span>),(<span class="tok-n">390</span>,<span class="tok-n">190</span>),(<span class="tok-n">210</span>,<span class="tok-n">140</span>)], fill=(<span class="tok-n">54</span>,<span class="tok-n">60</span>,<span class="tok-n">78</span>,<span class="tok-n">255</span>))</span><span class="ln">tex[<span class="tok-s">"H03C"</span>] = (png_bytes(im), <span class="tok-n">420</span>, <span class="tok-n">240</span>, <span class="tok-n">600.0</span>, <span class="tok-n">365.0</span>)</span><span class="ln"></span><span class="ln"><span class="tok-p"># 2) Ordered draw stack (back -> front): (id, head, kind, pitchGroup, clipTarget, clip)</span></span><span class="ln">order = [(<span class="tok-s">"H01"</span>,<span class="tok-n">True</span>,<span class="tok-n">0</span>,<span class="tok-s">"back"</span>,<span class="tok-n">False</span>,<span class="tok-n">None</span>), (<span class="tok-s">"B01"</span>,<span class="tok-n">False</span>,<span class="tok-n">1</span>,<span class="tok-s">"face"</span>,<span class="tok-n">False</span>,<span class="tok-n">None</span>),</span><span class="ln">         (<span class="tok-s">"F01"</span>,<span class="tok-n">True</span>,<span class="tok-n">0</span>,<span class="tok-s">"face"</span>,<span class="tok-n">True</span>,<span class="tok-n">None</span>), (<span class="tok-s">"H03C"</span>,<span class="tok-n">True</span>,<span class="tok-n">0</span>,<span class="tok-s">"bangs"</span>,<span class="tok-n">False</span>,<span class="tok-n">None</span>)]</span><span class="ln">layers = [{<span class="tok-s">"id"</span>:i, <span class="tok-s">"w"</span>:tex[i][<span class="tok-n">1</span>], <span class="tok-s">"h"</span>:tex[i][<span class="tok-n">2</span>], <span class="tok-s">"kind"</span>:k, <span class="tok-s">"head"</span>:h, <span class="tok-s">"jaw"</span>:<span class="tok-n">False</span>,</span><span class="ln">           <span class="tok-s">"noFade"</span>:h, <span class="tok-s">"hole"</span>:<span class="tok-n">False</span>, <span class="tok-s">"clip"</span>:c, <span class="tok-s">"clipTarget"</span>:ct, <span class="tok-s">"pad"</span>:<span class="tok-n">320.0</span>, <span class="tok-s">"pitchGroup"</span>:pg}</span><span class="ln">          <span class="tok-k">for</span> i,h,k,pg,ct,c <span class="tok-k">in</span> order]</span><span class="ln"></span><span class="ln"><span class="tok-p"># 3) Multi-angle yaw samples (-0.22 .. +0.22 rad) with depth parallax</span></span><span class="ln">samples = []</span><span class="ln"><span class="tok-k">for</span> ang <span class="tok-k">in</span> (<span class="tok-n">-0.22</span>, <span class="tok-n">-0.11</span>, <span class="tok-n">0.0</span>, <span class="tok-n">0.11</span>, <span class="tok-n">0.22</span>):</span><span class="ln">    sl = []</span><span class="ln">    <span class="tok-k">for</span> i,h,_,pg,_,_ <span class="tok-k">in</span> order:</span><span class="ln">        cx, cy = tex[i][<span class="tok-n">3</span>], tex[i][<span class="tok-n">4</span>]</span><span class="ln">        depth = <span class="tok-n">-0.35</span> <span class="tok-k">if</span> pg == <span class="tok-s">"back"</span> <span class="tok-k">else</span> (<span class="tok-n">0.14</span> <span class="tok-k">if</span> pg == <span class="tok-s">"bangs"</span> <span class="tok-k">else</span> <span class="tok-n">0.0</span>)</span><span class="ln">        sl.append({<span class="tok-s">"A"</span>:[<span class="tok-n">1</span>,<span class="tok-n">0</span>,<span class="tok-n">0</span>,<span class="tok-n">1</span>], <span class="tok-s">"t"</span>:[round(cx + (math.sin(ang)*<span class="tok-n">260</span>*depth <span class="tok-k">if</span> h <span class="tok-k">else</span> <span class="tok-n">0</span>), <span class="tok-n">2</span>), cy],</span><span class="ln">                   <span class="tok-s">"op"</span>:<span class="tok-n">1.0</span>, **({<span class="tok-s">"turn"</span>:round(ang*<span class="tok-n">0.75</span>, <span class="tok-n">4</span>)} <span class="tok-k">if</span> h <span class="tok-k">else</span> {})})</span><span class="ln">    samples.append({<span class="tok-s">"angle"</span>:ang, <span class="tok-s">"jaw"</span>:<span class="tok-n">0.0</span>, <span class="tok-s">"chin"</span>:<span class="tok-n">0.0</span>, <span class="tok-s">"chinAt"</span>:[<span class="tok-n">600</span>,<span class="tok-n">680</span>], <span class="tok-s">"layers"</span>:sl})</span><span class="ln"></span><span class="ln"><span class="tok-p"># 4) Assemble pack.json, layer2d.json, deterministic SHA256SUMS.json, and write ZIP</span></span><span class="ln"><span class="tok-p"># Full runnable script (with motion, skirt, expr, chains): https://layer2d.com/agent-guide.md</span></span></code></pre>
+            <p>Grab the complete copy-pasteable 140-line script (including <code>motion</code>, <code>skirt</code>, <code>expr</code>, <code>chains</code>, and ZIP packing) in <a href="agent-guide.md"><code>agent-guide.md</code></a>.</p>
+          </section>
+
+          <section id="pack-schema">
+            <h2>pack.json schema</h2>
+            <p>All geometry uses canonical <code>canvas: [W, H]</code> pixels (origin top-left, <code>+X</code> right, <code>+Y</code> down). <code>samples[k].layers[i]</code> is parallel-indexed to <code>layers[i]</code>.</p>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Key</th><th>Structure &amp; contract</th></tr></thead>
+                <tbody>
+                  <tr><td><code>canvas</code> / <code>views</code></td><td><code>[W, H]</code> master resolution; <code>views.bust</code> and <code>views.full</code> framing rects <code>[x0, y0, x1, y1]</code>.</td></tr>
+                  <tr><td><code>head</code></td><td><code>centre</code>, <code>radius</code>, <code>eu</code>/<code>ev</code> axes, <code>chin</code>, <code>neck</code>, <code>jawNear</code>, <code>pivot</code> (neck rotation), <code>turn: {R, L}</code> (radians, e.g. <code>-0.22 / +0.22</code>).</td></tr>
+                  <tr><td><code>layers[]</code></td><td>Ordered back-to-front: <code>id</code>, <code>w</code>, <code>h</code>, <code>kind</code> (<code>0</code> head, <code>1</code> torso, <code>2/3</code> arms R/L, <code>4</code> skirt, <code>5</code> hips/tail, <code>6</code> leg), <code>head</code>, <code>clip</code>, <code>clipTarget</code>, <code>behind: [maskA, maskB]</code>, <code>pad</code>, <code>chains</code>, <code>chainSigma</code>, <code>pitchGroup</code>.</td></tr>
+                  <tr><td><code>samples[]</code></td><td>Sorted ascending by <code>angle</code>. Each layer entry has <code>A: [a0,a1,a2,a3]</code>, <code>t: [tx,ty]</code>, <code>op</code>, optional <code>turn</code>, binary occlusion <code>behind</code> (<code>0</code> or <code>1</code>), and optional inverse warp grid <code>D</code> (flat float array of length <code>2 × gd²</code>, <code>gd ∈ {3,5,7,9,11}</code>).</td></tr>
+                  <tr><td><code>pitchGroups</code></td><td>Map of <code>layerId → "face" | "bangs" | "side" | "crown" | "back" | "ear" | "humanEar"</code> for vertical head look parallax.</td></tr>
+                  <tr><td><code>chains[]</code></td><td>Multi-joint spring chains: <code>name</code>, <code>parent</code> (<code>"head" | "body" | "hips" | "armR" | "armL"</code>), <code>k: [root, tip]</code>, <code>damp</code>, <code>joints: [x0,y0, x1,y1, …]</code> (2–6 joints), <code>depth</code>, <code>pin</code>.</td></tr>
+                  <tr><td><code>tail</code></td><td>Optional rigid pelvis-locked tail: <code>{id, pivot: [x,y], amp, freq, happyFaces}</code>.</td></tr>
+                  <tr><td><code>outfits</code></td><td>Named toggles: <code>{label, default, hide: [ids], off: [dx,dy], secs}</code>.</td></tr>
+                  <tr><td><code>expr</code></td><td><code>pieces</code> (static overlays or flipbook <code>atlas: {cols, rows, fps, intro, loop, pad}</code>), <code>faces</code> (<code>hide</code>, <code>add</code>, <code>move</code>, <code>eyes</code>, <code>look</code>), <code>holds</code> (<code>hide</code>, <code>add</code>, <code>still</code>, <code>face</code>), and <code>vowels: {A, I, U, E, O}</code>.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="agent-guide">
+            <h2>Agent authoring guide &amp; lessons learned</h2>
+            <p>Practical engineering rules distilled from building multi-layer production rigs. Follow these when generating or rigging avatars autonomously:</p>
+            <ul>
+              <li><strong>Never crossfade hair (<code>op = 1.0</code> always).</strong> Alpha-fading hair across turns creates translucent ghosts. Separate hair into solid physical depth shells — back (<code>H01</code>), crown fill behind ears (<code>H02c</code>), mid depth (<code>H02/H02s</code>), under-bangs (<code>H03u</code>), side locks (<code>H04s/H04</code>), and front bangs (<code>H03C/R/L</code>) — with signed parallax.</li>
+              <li><strong>Never flip <code>behind</code> near center yaw (<code>a = 0</code>) over the forehead or brows.</strong> The WebGL2 runtime applies <code>behind</code> as a hard binary mask (<code>&gt;= 0.5 ? 1 : 0</code>). Toggling <code>0 ↔ 1</code> near center makes under-bangs snap visibly above eyebrows. Keep under-bangs (<code>H03u</code>) outside the eyebrow X-band and lock depth shells (<code>H02c/H03u/H02s/H04s</code>) permanently to <code>behind = 1.0</code> at all angles; transition far-side locks (<code>H04</code>) only after they clear the cheek edge (<code>|u| &gt;= 0.28</code>).</li>
+              <li><strong>Keep crown fill behind animal ears.</strong> For kemonomimi ears, draw crown fill shells behind ear layers and keep the dome top below ear roots so dark hair triangles never cover white inner ear fluff. Set <code>pitchGroups[id] = "ear"</code> so vertical pitch pivots cleanly at skull roots.</li>
+              <li><strong>Inverse warp grid (<code>D</code>) sign convention &amp; padding.</strong> The shader samples texture coordinates at <code>g_tex = g_screen + D(g_screen)</code>. Moving rendered pixels by <code>+Δg</code> means <strong>subtracting</strong> <code>Δg</code> from <code>D</code>. Keep <code>pad</code> generous (<code>320–420 px</code>) so warped tips never clip against the layer quad.</li>
+              <li><strong>Rigid tail rotation beats spring chains on fluffy tails.</strong> Multi-segment Voronoi chains bend thick animal tails like wavy fabric with segment creases. Use <code>pack.tail</code> with pure rigid rotation around the pelvis pivot (no per-frame non-uniform <code>sx/sy</code> stretch).</li>
+              <li><strong>Topological clipping masks.</strong> Set <code>clipTarget: true</code> on every layer referenced by another layer's <code>clip</code> or <code>behind</code> (for example <code>F01</code> and sclera <code>E01R/L</code>). The runtime topologically sorts parent masks before child masks automatically.</li>
+              <li><strong>Pose-arm holds &amp; expressions.</strong> Place forehead gloom/mood shades high above the browline. In <code>holds</code>, hide every replaced resting arm/sleeve layer and lock its spring with <code>still: ["armR"]</code>. Force <code>eyes = 1.0</code> when capturing expression QA tiles so random blinks never ruin a sheet.</li>
+              <li><strong>Run a visual Playwright QA loop before shipping.</strong> Render headless WebGL2 turn sweeps across both wide angles (<code>-1.0 .. +1.0</code>) and fine center angles (<code>-0.40 .. +0.40</code>), plus pitch grids, expression sheets, and <code>?obs=1</code> top-corner alpha checks (<code>alpha === 0</code>), and inspect the rendered images directly.</li>
+            </ul>
+            <p>Full standalone agent specification &amp; starter builder script: <a href="agent-guide.md"><code>https://layer2d.com/agent-guide.md</code></a>.</p>
+          </section>
+
+          <section id="studio">
+            <h2>Studio</h2>
+            <p><a href="studio/">Layer2D Studio</a> runs 100% client-side in your browser — open any <code>.l2d</code> bundle or import a layered Photoshop <code>.psd</code> directly, sculpt warp grids and lattice cages on yaw keyforms, edit draw order, clipping, <code>behind</code> occlusion, spring chains, tail pivots, expressions, flipbook FX, and keyframe animations, then export a SHA-256-verified <code>.l2d</code> bundle with optional non-destructive <code>studio.json</code> metadata.</p>
+          </section>
+
+          <section id="player">
+            <h2>Player</h2>
+            <p>The <a href="player/?model=test-signal.l2d">Layer2D Player</a> runs entirely in the browser on WebGL2. Nothing is uploaded.</p>
+            <ul>
+              <li>Drag an <code>.l2d</code> file onto the page to load it.</li>
+              <li>Webcam tracking drives head turn, gaze and blinks.</li>
+              <li>Microphone input drives lip sync from vowel shapes.</li>
+              <li>Expressions, outfits and holds are selected from the panel.</li>
+            </ul>
+            <h3>Keyboard</h3>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Key</th><th>Action</th></tr></thead>
+                <tbody>
+                  <tr><td><code>M</code></td><td>Toggle microphone lip sync</td></tr>
+                  <tr><td><code>C</code></td><td>Toggle webcam tracking</td></tr>
+                  <tr><td><code>A</code></td><td>Toggle idle animation</td></tr>
+                  <tr><td><code>B</code></td><td>Cycle background: light, dark, transparent</td></tr>
+                  <tr><td><code>1</code>–<code>9</code> / <code>0</code></td><td>Toggle quick expressions / clear expression</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="obs">
+            <h2>OBS Browser Source</h2>
+            <p>Add a <strong>Browser</strong> source in OBS and point it at the player with <code>?obs=1</code>. OBS mode renders on a transparent background and hides the interface.</p>
+            <pre class="code"><code><span class="ln"><span class="tok-s">https://layer2d.com/player/?model=test-signal.l2d&amp;obs=1&amp;mic=1</span></span></code></pre>
+            <ul>
+              <li>Set width and height to match your canvas, for example <code>1080 × 1920</code>.</li>
+              <li>Enable <strong>Control audio via OBS</strong> only if you want OBS to own the microphone.</li>
+              <li>Use <strong>Interact</strong> on the source to grant webcam or microphone permission once.</li>
+            </ul>
+          </section>
+
+          <section id="params">
+            <h2>URL parameters</h2>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Parameter</th><th>Effect</th></tr></thead>
+                <tbody>
+                  <tr><td><code>model=&lt;url&gt;</code></td><td>Load a <code>.l2d</code> archive or unpacked <code>pack.json</code>.</td></tr>
+                  <tr><td><code>obs=1</code></td><td>Transparent background, interface hidden.</td></tr>
+                  <tr><td><code>bg=transparent</code></td><td>Same as <code>obs=1</code>.</td></tr>
+                  <tr><td><code>mic=1</code></td><td>Start microphone lip sync on load.</td></tr>
+                  <tr><td><code>cam=1</code></td><td>Start webcam tracking on load.</td></tr>
+                  <tr><td><code>auto=0</code></td><td>Disable idle animation.</td></tr>
+                  <tr><td><code>face=&lt;name&gt;</code></td><td>Start on a named expression, for example <code>face=Happy</code>.</td></tr>
+                  <tr><td><code>view=bust|full</code></td><td>Select initial camera framing.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="cli">
+            <h2>CLI</h2>
+            <p>The <code>rigkit.format</code> module packs, inspects, validates and unpacks bundles using Python's standard library.</p>
+            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> <span class="tok-p">pack a viewer directory (pack.json + tex/)</span></span><span class="ln">python -m rigkit.format pack models/demo/viewer demo.l2d \</span><span class="ln">  --meta avatar_spec.json --preview preview.png</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> <span class="tok-p">print the manifest summary</span></span><span class="ln">python -m rigkit.format inspect demo.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> <span class="tok-p">verify structure, textures and SHA-256 digests</span></span><span class="ln">python -m rigkit.format validate demo.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> <span class="tok-p">extract safely after validation</span></span><span class="ln">python -m rigkit.format unpack demo.l2d out/</span></code></pre>
+            <p><code>validate</code> exits with status 1 on any error, so it can gate CI.</p>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="wordmark" href="./"><img class="brand-mark" src="assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
+      <nav class="footer-nav" aria-label="Footer">
+        <a href="format.html">Format</a>
+        <a href="studio/">Studio</a>
+        <a href="player/?model=test-signal.l2d">Player</a>
+        <a href="./#avatars">Avatars</a>
+        <a href="docs.html">Docs</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

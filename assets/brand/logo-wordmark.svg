@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 236 64" fill="none">
+  <defs>
+    <linearGradient id="lw-top" x1="8" y1="8" x2="56" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#e82e52"/>
+      <stop offset="100%" stop-color="#a81632"/>
+    </linearGradient>
+    <linearGradient id="lw-mid" x1="8" y1="22" x2="56" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f4f6fa"/>
+      <stop offset="100%" stop-color="#c2c8d6"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(2 2) scale(0.94)">
+    <path d="M32 35.6L56 46.6L32 57.6L8 46.6L32 35.6Z" fill="#32384a" stroke="#57617c" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M32 21.4L56 32.4L32 43.4L8 32.4L32 21.4Z" fill="url(#lw-mid)" stroke="#0c0d10" stroke-width="1.2" stroke-linejoin="round"/>
+    <path d="M32 7L56 18L32 29L8 18L32 7Z" fill="url(#lw-top)" stroke="#ff6685" stroke-opacity="0.45" stroke-width="1.1" stroke-linejoin="round"/>
+    <rect x="29.1" y="15.1" width="5.8" height="5.8" rx="1" transform="rotate(45 32 18)" fill="#ffffff"/>
+  </g>
+  <text x="72" y="42" fill="#f1f3f8" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="30" font-weight="700" letter-spacing="-0.03em">Layer<tspan fill="#e32b4f">2D</tspan></text>
+</svg>

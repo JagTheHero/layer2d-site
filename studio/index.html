@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Layer2D Studio — Open 2D Avatar Editor</title>
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<link rel="icon" type="image/x-icon" href="../favicon.ico" sizes="any" />
+<link rel="apple-touch-icon" href="../apple-touch-icon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./studio.css" />
+</head>
+<body>
+<div id="app" class="studio-shell">
+  <!-- TOP WORKSPACE & MENU BAR -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <a class="brand" href="../index.html" title="Back to Layer2D">
+        <img class="brand-mark" src="../assets/brand/logo-mark.svg" alt="" width="20" height="20" />
+        <span class="brand-main">Layer<em class="brand-2d">2D</em></span>
+        <span class="brand-sub">Studio</span>
+      </a>
+      <span class="v-sep"></span>
+      <nav class="menubar" aria-label="Studio Menu">
+        <div class="menu-wrap">
+          <button class="menu-btn" data-menu="file" type="button">File</button>
+          <div class="menu-pop" id="menu-file" hidden>
+            <button data-act="open-l2d" type="button">Open .l2d… <kbd>Ctrl+O</kbd></button>
+            <button data-act="import-psd" type="button">Import PSD… <kbd>Ctrl+I</kbd></button>
+            <button data-act="import-layer" type="button">Add PNG/WebP Layer…</button>
+            <hr />
+            <button data-act="load-demo" type="button">Load Demo Avatar</button>
+            <button data-act="restore-draft" type="button">Restore Autosave</button>
+            <hr />
+            <button data-act="save-l2d" type="button">Save .l2d <kbd>Ctrl+S</kbd></button>
+            <button data-act="export-l2d" type="button">Export .l2d As… <kbd>Ctrl+Shift+S</kbd></button>
+          </div>
+        </div>
+        <div class="menu-wrap">
+          <button class="menu-btn" data-menu="edit" type="button">Edit</button>
+          <div class="menu-pop" id="menu-edit" hidden>
+            <button data-act="undo" type="button">Undo <kbd>Ctrl+Z</kbd></button>
+            <button data-act="redo" type="button">Redo <kbd>Ctrl+Shift+Z</kbd></button>
+            <hr />
+            <button data-act="dup-layer" type="button">Duplicate Selected Layer</button>
+            <button data-act="del-layer" type="button">Delete Selected Layer</button>
+            <hr />
+            <button data-act="reset-warp" type="button">Reset Layer Warp Grid</button>
+            <button data-act="smooth-warp" type="button">Smooth Layer Warp Grid</button>
+          </div>
+        </div>
+        <div class="menu-wrap">
+          <button class="menu-btn" data-menu="model" type="button">Model</button>
+          <div class="menu-pop" id="menu-model" hidden>
+            <button data-act="view-bust" type="button">Frame Bust View <kbd>1</kbd></button>
+            <button data-act="view-full" type="button">Frame Full Body <kbd>2</kbd></button>
+            <button data-act="view-layer" type="button">Frame Selected Layer <kbd>F</kbd></button>
+            <hr />
+            <button data-act="toggle-solo" type="button">Solo Selected Layer <kbd>S</kbd></button>
+            <button data-act="show-all" type="button">Show All Layers</button>
+            <hr />
+            <button data-act="validate-model" type="button">Validate layer2d/v1 Spec</button>
+          </div>
+        </div>
+        <div class="menu-wrap">
+          <button class="menu-btn" data-menu="rig" type="button">Rig</button>
+          <div class="menu-pop" id="menu-rig" hidden>
+            <button data-act="prev-key" type="button">Previous Yaw Keyform <kbd>Q</kbd></button>
+            <button data-act="next-key" type="button">Next Yaw Keyform <kbd>E</kbd></button>
+            <button data-act="center-key" type="button">Center Keyform (0°) <kbd>0</kbd></button>
+            <hr />
+            <button data-act="mirror-lr" type="button">Mirror Keyform Left ↔ Right</button>
+            <button data-act="interp-key" type="button">Interpolate Keyform from Neighbors</button>
+            <button data-act="copy-key-all" type="button">Copy Layer Transform to All Angles</button>
+            <hr />
+            <button data-act="add-chain" type="button">Add New Spring Chain</button>
+            <button data-act="physics-impulse" type="button">Trigger Physics Impulse</button>
+          </div>
+        </div>
+        <div class="menu-wrap">
+          <button class="menu-btn" data-menu="export" type="button">Export</button>
+          <div class="menu-pop" id="menu-export" hidden>
+            <button data-act="export-l2d" type="button">Export Verified .l2d Bundle…</button>
+            <button data-act="export-png" type="button">Save Viewport Snapshot PNG…</button>
+            <button data-act="export-video" type="button">Record Timeline Clip (WebM)…</button>
+            <button data-act="open-player" type="button">Test in Layer2D Player…</button>
+          </div>
+        </div>
+      </nav>
+      <span class="doc-badge" id="doc-title" title="Active document">test-signal.l2d</span>
+    </div>
+
+    <div class="mode-tabs" role="tablist" aria-label="Workspace Modes">
+      <button class="mode-tab" data-mode="model" role="tab" type="button">Model</button>
+      <button class="mode-tab" data-mode="mesh" role="tab" type="button">Mesh</button>
+      <button class="mode-tab active" data-mode="rig" role="tab" type="button">Rig</button>
+      <button class="mode-tab" data-mode="physics" role="tab" type="button">Physics</button>
+      <button class="mode-tab" data-mode="expressions" role="tab" type="button">Expressions</button>
+      <button class="mode-tab" data-mode="animate" role="tab" type="button">Animate</button>
+    </div>
+
+    <div class="topbar-right">
+      <button class="btn btn-ghost" id="btn-import-psd" type="button">Import PSD</button>
+      <button class="btn btn-ghost" id="btn-open-l2d" type="button">Open .l2d</button>
+      <button class="btn btn-primary" id="btn-export-l2d" type="button">Export .l2d</button>
+    </div>
+  </header>
+
+  <!-- MAIN WORKSPACE BODY -->
+  <div class="workspace" id="workspace">
+    <!-- LEFT DOCK -->
+    <aside class="dock dock-left" id="dock-left" aria-label="Outliner and Parameters">
+      <!-- Rig/Model/Mesh/Physics Left Content -->
+      <div class="dock-split" id="left-rig-view">
+        <section class="panel panel-layers">
+          <div class="panel-head">
+            <span class="panel-title">PARTS &amp; LAYERS</span>
+            <div class="panel-actions">
+              <button class="icon-btn" id="btn-add-layer" title="Add PNG/WebP Layer" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+              <button class="icon-btn" id="btn-dup-layer" title="Duplicate Layer" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11V3h8"/></svg>
+              </button>
+              <button class="icon-btn" id="btn-del-layer" title="Delete Layer" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 4.5h10M6 4.5V3h4v1.5M5 4.5v8.5h6V4.5"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="layer-search-wrap">
+            <input id="layer-search" class="field-input" type="search" placeholder="Filter layers…" autocomplete="off" />
+          </div>
+          <div class="layer-tree" id="layer-tree" role="tree"></div>
+        </section>
+
+        <section class="panel panel-params">
+          <div class="panel-head">
+            <span class="panel-title">PARAMETERS</span>
+            <div class="panel-actions">
+              <button class="icon-btn" id="btn-param-mirror" title="Mirror Current Keyform Left ↔ Right" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2v12M3 5l3 3-3 3M13 5l-3 3 3 3"/></svg>
+              </button>
+              <button class="icon-btn" id="btn-param-reset" title="Reset Parameters to Neutral" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 8a5 5 0 1 0 1.4-3.5L3 6"/><path d="M3 3v3h3"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="param-list" id="param-list"></div>
+        </section>
+      </div>
+
+      <!-- Expressions / Animate Left Content -->
+      <div class="dock-split" id="left-expr-view" hidden>
+        <section class="panel panel-expr-cards">
+          <div class="panel-head">
+            <span class="panel-title">EXPRESSIONS &amp; TOGGLES</span>
+            <div class="panel-actions">
+              <button class="icon-btn" id="btn-new-expr-quick" title="New Expression" type="button">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="expr-panel-scroll">
+            <div class="subhead">EXPRESSIONS</div>
+            <div class="expr-card-grid" id="expr-card-grid"></div>
+            <div class="subhead">TOGGLES &amp; HOLDS</div>
+            <div class="toggle-list" id="toggle-list"></div>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <!-- CENTER VIEWPORT -->
+    <main class="viewport-wrap" id="viewport-wrap">
+      <div class="stage-frame" id="stage-frame">
+        <canvas id="gl-canvas"></canvas>
+        <canvas id="overlay-canvas"></canvas>
+
+        <!-- Hairline registration crosshairs & 4 corner ticks -->
+        <div class="stage-crosshair-h" aria-hidden="true"></div>
+        <div class="stage-crosshair-v" aria-hidden="true"></div>
+        <div class="corner-tick tl" aria-hidden="true"></div>
+        <div class="corner-tick tr" aria-hidden="true"></div>
+        <div class="corner-tick bl" aria-hidden="true"></div>
+        <div class="corner-tick br" aria-hidden="true"></div>
+
+        <!-- Floating Tool Rail -->
+        <div class="tool-rail" id="tool-rail" role="toolbar" aria-label="Viewport Tools">
+          <button class="tool-btn" data-tool="select" title="Select Layer (V)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 3.5l10.5 7.5-4.8 1.2-2.2 4.3L5 3.5z"/></svg>
+          </button>
+          <button class="tool-btn" data-tool="transform" title="Transform Layer (G)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3v14M3 10h14M10 3l-2.5 2.5M10 3l2.5 2.5M10 17l-2.5-2.5M10 17l2.5-2.5M3 10l2.5-2.5M3 10l2.5 2.5M17 10l-2.5-2.5M17 10l-2.5 2.5"/></svg>
+          </button>
+          <button class="tool-btn active" data-tool="warp_brush" title="Warp Sculpt Brush (B)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.5 3.5l2 2-7.5 7.5-3.2.8.8-3.2 7.9-7.1z"/><path d="M4 16.5c1.5 0 2.5-.8 2.8-2"/></svg>
+          </button>
+          <button class="tool-btn" data-tool="lattice" title="Warp Lattice Cage (L)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3.5" y="3.5" width="13" height="13" rx="1"/><path d="M8 3.5v13M12 3.5v13M3.5 8h13M3.5 12h13"/></svg>
+          </button>
+          <button class="tool-btn" data-tool="mesh" title="Mesh Vertices (M)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M10 3.5l6.5 12H3.5l6.5-12z"/><circle cx="10" cy="3.5" r="1.4" fill="currentColor"/><circle cx="16.5" cy="15.5" r="1.4" fill="currentColor"/><circle cx="3.5" cy="15.5" r="1.4" fill="currentColor"/><path d="M10 3.5l0 7.5m0 0l6.5 4.5m-6.5-4.5l-6.5 4.5" opacity="0.65"/></svg>
+          </button>
+          <button class="tool-btn" data-tool="pivot" title="Rig Pivots (P)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="4.5"/><path d="M10 2.5v3M10 14.5v3M2.5 10h3M14.5 10h3"/></svg>
+          </button>
+          <button class="tool-btn" data-tool="chain" title="Spring Physics Chain (C)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 4c0 2 8 2 8 4s-8 2-8 4 8 2 8 4"/><circle cx="6" cy="4" r="1.4" fill="currentColor"/><circle cx="14" cy="16" r="1.4" fill="currentColor"/></svg>
+          </button>
+          <button class="tool-btn" data-tool="pan" title="Pan Viewport (H / Space)" type="button">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7.5 11V5.5a1 1 0 0 1 2 0V9m0-4.5a1 1 0 0 1 2 0V9m0-3.5a1 1 0 0 1 2 0V11m0-3.5a1 1 0 0 1 2 0v5.2a4.3 4.3 0 0 1-4.3 4.3h-1.2a4 4 0 0 1-3.3-1.8L4.6 11a1 1 0 0 1 1.6-1.2L7.5 11"/></svg>
+          </button>
+        </div>
+
+        <!-- Loading / Toast overlay -->
+        <div class="toast" id="toast" hidden></div>
+        <div class="drop-veil" id="drop-veil" hidden>
+          <div class="drop-box">Drop .l2d, .psd, or .png/.webp image to open in Layer2D Studio</div>
+        </div>
+      </div>
+
+      <!-- Bottom Viewport HUD Bar -->
+      <div class="viewport-bar">
+        <div class="vp-group">
+          <button class="vp-btn mono" id="vp-zoom" title="Reset Bust / Full View" type="button">100%</button>
+          <span class="vp-sep"></span>
+          <button class="vp-btn active" id="vp-grid" type="button">Grid</button>
+          <span class="vp-sep"></span>
+          <button class="vp-btn active" id="vp-lattice" type="button">Lattice</button>
+          <span class="vp-sep"></span>
+          <button class="vp-btn active" id="vp-chains" type="button">Chains</button>
+          <span class="vp-sep"></span>
+          <button class="vp-btn" id="vp-pivots" type="button">Pivots</button>
+          <span class="vp-sep"></span>
+          <button class="vp-btn" id="vp-onion" type="button">Onion Skin</button>
+          <span class="vp-sep"></span>
+          <span class="vp-readout mono" id="vp-yaw">Yaw 0.0°</span>
+        </div>
+        <div class="vp-group">
+          <button class="vp-btn" id="vp-physics" title="Toggle Live Spring Physics" type="button">Physics</button>
+          <span class="vp-sep"></span>
+          <button class="vp-btn" id="vp-mic" title="Test Live AEIOU Mic Lip-Sync" type="button">Mic</button>
+          <span class="vp-sep"></span>
+          <button class="vp-btn" id="vp-cam" title="Test Live Webcam Tracking" type="button">Webcam</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT INSPECTOR DOCK -->
+    <aside class="dock dock-right" id="dock-right" aria-label="Inspector">
+      <div class="panel-head">
+        <span class="panel-title" id="right-panel-title">INSPECTOR</span>
+      </div>
+      <div class="inspector-tabs" id="inspector-tabs" role="tablist">
+        <button class="insp-tab active" data-tab="layer" type="button">Layer</button>
+        <button class="insp-tab" data-tab="transform" type="button">Transform</button>
+        <button class="insp-tab" data-tab="warp" type="button">Warp</button>
+        <button class="insp-tab" data-tab="physics" type="button">Physics</button>
+        <button class="insp-tab" data-tab="expressions" type="button">Expr</button>
+      </div>
+      <div class="inspector-body" id="inspector-body"></div>
+    </aside>
+  </div>
+
+  <!-- BOTTOM COLLAPSIBLE KEYFRAME TIMELINE DOCK -->
+  <section class="timeline-dock collapsed" id="timeline-dock" aria-label="Animation Timeline">
+    <div class="tl-collapsed-bar" id="tl-collapsed-bar">
+      <div class="tl-left-inline">
+        <button class="tl-play-mini" id="tl-play-mini" title="Play / Pause (Space)" type="button">
+          <svg viewBox="0 0 14 14" fill="currentColor"><path d="M3 2.2l9 4.8-9 4.8V2.2z"/></svg>
+        </button>
+        <span class="mono tl-time-mini" id="tl-time-mini">00:00.00</span>
+        <span class="v-sep"></span>
+        <span class="tl-label">Timeline</span>
+      </div>
+      <button class="icon-btn" id="tl-expand-btn" title="Expand Timeline" type="button">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 10l4-4 4 4"/></svg>
+      </button>
+    </div>
+
+    <div class="tl-expanded" id="tl-expanded" hidden>
+      <div class="tl-header">
+        <div class="tl-title-group">
+          <span class="panel-title">TIMELINE</span>
+          <select id="tl-clip-select" class="field-select compact"></select>
+          <button class="btn-xs" id="tl-add-key" title="Insert Keyframe at Playhead" type="button">+ Keyframe</button>
+          <button class="btn-xs" id="tl-new-clip" title="New Animation Clip" type="button">+ Clip</button>
+        </div>
+        <div class="tl-transport">
+          <button class="tl-tbtn" id="tl-first" title="Start" type="button">
+            <svg viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3.5" width="1.6" height="9"/><path d="M12.5 3.5L6 8l6.5 4.5v-9z"/></svg>
+          </button>
+          <button class="tl-tbtn" id="tl-prev" title="Previous Key" type="button">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 3.5L5 8l6.5 4.5v-9z"/></svg>
+          </button>
+          <button class="tl-tbtn primary" id="tl-play" title="Play / Pause (Space)" type="button">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.2l8 4.8-8 4.8V3.2z"/></svg>
+          </button>
+          <button class="tl-tbtn" id="tl-next" title="Next Key" type="button">
+            <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 3.5L11 8l-6.5 4.5v-9z"/></svg>
+          </button>
+          <button class="tl-tbtn" id="tl-last" title="End" type="button">
+            <svg viewBox="0 0 16 16" fill="currentColor"><rect x="11.4" y="3.5" width="1.6" height="9"/><path d="M3.5 3.5L10 8l-6.5 4.5v-9z"/></svg>
+          </button>
+          <span class="v-sep"></span>
+          <label class="tl-loop-lbl"><input type="checkbox" id="tl-loop" checked /> Loop</label>
+          <select id="tl-fps" class="field-select compact">
+            <option value="24">24 fps</option>
+            <option value="30" selected>30 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+          <button class="btn-xs" id="tl-export-video" type="button">Export Video</button>
+          <button class="icon-btn" id="tl-collapse-btn" title="Collapse Timeline" type="button">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="tl-grid" id="tl-grid">
+        <div class="tl-tracks-col" id="tl-tracks-col"></div>
+        <div class="tl-dope-wrap" id="tl-dope-wrap">
+          <canvas id="tl-canvas"></canvas>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- Hidden File Inputs -->
+<input id="file-l2d" type="file" accept=".l2d,application/zip" hidden />
+<input id="file-psd" type="file" accept=".psd" hidden />
+<input id="file-img" type="file" accept="image/png,image/webp,image/jpeg" hidden />
+<input id="file-replace-tex" type="file" accept="image/png,image/webp,image/jpeg" hidden />
+<input id="file-fx-tex" type="file" accept="image/png,image/webp" hidden />
+<video id="cam-video" playsinline muted hidden></video>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

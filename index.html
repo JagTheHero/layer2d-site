@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Layer2D — The open 2D avatar engine</title>
+  <meta name="description" content="Free .l2d specification and WebGL2 OBS player. Build, rig, and stream with zero licensing fees.">
+  <meta name="theme-color" content="#0c0d10">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" type="image/x-icon" href="favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta property="og:title" content="Layer2D — The open 2D avatar engine">
+  <meta property="og:description" content="Free .l2d specification and WebGL2 OBS player. Build, rig, and stream with zero licensing fees.">
+  <meta property="og:image" content="https://layer2d.com/assets/avatars/kiri_hero.png">
+  <link rel="canonical" href="https://layer2d.com/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="./"><img class="brand-mark" src="assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
+      <nav class="nav" aria-label="Primary">
+        <a href="format.html">Format</a>
+        <a href="studio/">Studio</a>
+        <a href="player/?model=test-signal.l2d">Player</a>
+        <a href="#avatars">Avatars</a>
+        <a href="docs.html">Docs</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <a class="btn btn-primary" href="player/?model=test-signal.l2d">Launch Player</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero section">
+      <div class="wrap">
+        <div>
+          <h1>The open 2D<br>avatar engine.</h1>
+          <p>Free .l2d specification, browser studio, and WebGL2 OBS player. Build, rig, and stream with zero licensing fees.</p>
+          <div class="actions">
+            <a class="btn btn-primary btn-lg" href="player/?model=test-signal.l2d">Launch Player</a>
+            <a class="btn btn-ghost btn-lg" href="studio/">Open Studio</a>
+          </div>
+        </div>
+        <div class="stage">
+          <span class="tick tl"></span><span class="tick tr"></span>
+          <span class="tick bl"></span><span class="tick br"></span>
+          <div id="runtime-mount" data-model="test-signal.l2d">
+            <img class="poster" src="assets/avatars/kiri_hero.png" alt="Kiri" width="1200" height="1600" fetchpriority="high">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-pad" id="avatars">
+      <div class="wrap">
+        <h2>Avatars</h2>
+        <div class="avatar-grid">
+          <button class="avatar-card" type="button" data-name="Kiri" data-src="assets/avatars/kiri_card.png" data-model="kiri">
+            <span class="portrait"><img src="assets/avatars/kiri_card.png" alt="" width="1200" height="1600" loading="lazy"></span>
+            <span class="name">Kiri</span>
+          </button>
+          <button class="avatar-card" type="button" data-name="Aurora" data-src="assets/avatars/aurora_card.png" data-model="aurora">
+            <span class="portrait"><img src="assets/avatars/aurora_card.png" alt="" width="1200" height="1600" loading="lazy"></span>
+            <span class="name">Aurora</span>
+          </button>
+          <button class="avatar-card" type="button" data-name="Test Signal" data-src="assets/avatars/test_signal_card.png" data-model="test-signal">
+            <span class="portrait"><img src="assets/avatars/test_signal_card.png" alt="" width="1200" height="1600" loading="lazy"></span>
+            <span class="name">Test Signal</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-pad" id="spec">
+      <div class="wrap">
+        <h2>Open specification</h2>
+        <div class="spec-grid">
+          <a class="feature" href="format.html#bundle">
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M24 7 41 15.5 24 24 7 15.5Z"/>
+              <path d="M7 23.5 24 32l17-8.5"/>
+              <path d="M7 31.5 24 40l17-8.5"/>
+            </svg>
+            <h3>Portable <br>.l2d format</h3>
+          </a>
+          <a class="feature" href="docs.html#obs">
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="6" y="9" width="36" height="30" rx="2.5"/>
+              <path d="M6 16h36"/>
+              <path d="M10.5 12.5h.01M14 12.5h.01M17.5 12.5h.01"/>
+              <path d="M21 22.5v10l8.5-5Z"/>
+            </svg>
+            <h3>WebGL2 <br>OBS runtime</h3>
+          </a>
+          <a class="feature" href="format.html#physics">
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M30 5c5 6 2 12-5 16S11 30 8 38"/>
+              <path d="M37 8c5 6 1 13-6 17s-14 9-17 16"/>
+              <path d="M43 13c4 6 0 13-7 17s-13 9-15 15"/>
+            </svg>
+            <h3>Multi-depth <br>3D hair &amp; physics</h3>
+          </a>
+          <pre class="code" aria-label="layer2d.json"><code><span class="ln"><span class="tok-p">{</span></span><span class="ln">  <span class="tok-k">"format"</span><span class="tok-p">:</span> <span class="tok-s">"layer2d/v1"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"id"</span><span class="tok-p">:</span> <span class="tok-s">"test-signal"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"name"</span><span class="tok-p">:</span> <span class="tok-s">"Test Signal"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"canvas"</span><span class="tok-p">: [</span><span class="tok-n">1296</span><span class="tok-p">,</span> <span class="tok-n">1728</span><span class="tok-p">],</span></span><span class="ln">  <span class="tok-k">"entry"</span><span class="tok-p">:</span> <span class="tok-s">"pack.json"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"stats"</span><span class="tok-p">: {</span></span><span class="ln">    <span class="tok-k">"layers"</span><span class="tok-p">:</span> <span class="tok-n">95</span><span class="tok-p">,</span> <span class="tok-k">"expressions"</span><span class="tok-p">:</span> <span class="tok-n">41</span><span class="tok-p">,</span> <span class="tok-k">"samples"</span><span class="tok-p">:</span> <span class="tok-n">17</span></span><span class="ln">  <span class="tok-p">},</span></span><span class="ln">  <span class="tok-k">"license"</span><span class="tok-p">:</span> <span class="tok-s">"MIT"</span></span><span class="ln"><span class="tok-p">}</span></span></code></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="wordmark" href="./"><img class="brand-mark" src="assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
+      <nav class="footer-nav" aria-label="Footer">
+        <a href="format.html">Format</a>
+        <a href="studio/">Studio</a>
+        <a href="player/?model=test-signal.l2d">Player</a>
+        <a href="#avatars">Avatars</a>
+        <a href="docs.html">Docs</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+
+  <dialog class="lightbox" id="lightbox" aria-labelledby="lb-name">
+    <div class="lb-stage">
+      <img id="lb-img" alt="">
+      <button class="lb-close" type="button" data-close aria-label="Close">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13"/></svg>
+      </button>
+    </div>
+    <div class="lb-bar">
+      <h3 class="lb-name" id="lb-name"></h3>
+      <div class="lb-actions">
+        <a class="btn btn-primary" id="lb-open" href="player/?model=test-signal.l2d">Open in Player</a>
+        <a class="btn btn-ghost" id="lb-studio" href="studio/?model=../player/test-signal.l2d">Open in Studio</a>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>
