@@ -1161,7 +1161,7 @@ const ctl = { auto: true, autoT0: 0, a: 0, aTarget: 0, pitch: 0, pitchTarget: 0,
               eyes: 1, vowel: null, last: null, lastF: null, raise: 0, legR: 0, legL: 0, walkAt: -1, walkStop: Infinity, calm: 0,
               head: 1, headT: 0,
               arms: { R: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 }, L: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 } } };
-const mic = { on: false, ctx: null, stream: null, analyser: null, freq: null, time: null, rms: 0, open: false, vowel: null, cand: null, candN: 0, holdUntil: 0 };
+const mic = { on: false, ctx: null, stream: null, analyser: null, freq: null, time: null, rms: 0, floor: 0.008, open: false, vowel: null, cand: null, candN: 0, holdUntil: 0 };
 const cam = { on: false, remoteOn: false, loading: false, landmarker: null, stream: null, video: null, lastVideoT: -1, eyeOpen: [1, 1], gaze: [0, 0], vowel: null, cand: null, candN: 0 };
 const camActive = () => cam.on || cam.remoteOn;
 let statusMsg = "", statusUntil = 0;
@@ -2574,7 +2574,10 @@ let t0 = null, simT = 0, fps = 0, frames = 0, fpsT = 0, paused = false;
 function loop(now) {
   if (paused) { loopRunning = false; return; }
   now /= 1000; if (t0 === null) { t0 = now; fpsT = now; }
-  if (mic.on) updateMic(now);
+  if (mic.on) {
+    updateMic(now);
+    if (obsHost.on && obsHost.conns.size && ctl.vowel !== obsHost.lastVowelSent) sendObsPose(now, true);
+  }
   if (cam.on) updateCam();
   if (obsHost.on && obsHost.conns.size) sendObsPose(now);
   const target = now - t0, dt = 1 / SUB;
@@ -2622,15 +2625,22 @@ function setBg(mode) {
 }
 $("bg-btn").onclick = () => setBg(BG_CYCLE[(BG_CYCLE.indexOf(bgMode) + 1) % BG_CYCLE.length]);
 
-// ---- live Web Audio AEIOU lip-sync (Mic) ---------------------------------------------------------------------------
+// ---- live Web Audio AEIOU lip-sync (Mic — low-latency direct capture + adaptive noise floor) -----------------------
 function updateMic(now) {
   if (!mic.analyser) return;
   mic.analyser.getFloatTimeDomainData(mic.time);
   let sum = 0;
   for (let i = 0; i < mic.time.length; i++) sum += mic.time[i] * mic.time[i];
   const rms = Math.sqrt(sum / mic.time.length);
-  mic.rms += (rms - mic.rms) * (rms > mic.rms ? 0.45 : 0.22);
-  if (mic.open ? mic.rms < 0.013 : mic.rms < 0.022) {
+  // Fast attack (1-frame speech onset) & crisp release (mouth closes cleanly when speech pauses)
+  mic.rms += (rms - mic.rms) * (rms > mic.rms ? 0.85 : 0.48);
+  // Adaptive ambient noise floor so raw low-latency mic audio stays rock-solid closed in quiet rooms
+  if (rms < mic.floor * 1.65) {
+    mic.floor = Math.max(0.0035, Math.min(0.035, mic.floor + (rms - mic.floor) * 0.04));
+  }
+  const openTh = Math.max(0.015, mic.floor * 2.4);
+  const closeTh = Math.max(0.009, mic.floor * 1.55);
+  if (mic.open ? mic.rms < closeTh : mic.rms < openTh) {
     mic.open = false; mic.vowel = null; mic.cand = null; mic.candN = 0; ctl.vowel = null;
     return;
   }
@@ -2652,13 +2662,13 @@ function updateMic(now) {
   else if (rH > 0.21 && rM > 0.26) v = "E";
   else if (mic.rms < 0.045 && rL > 0.44) v = "O";
   if (v === mic.cand) mic.candN++; else { mic.cand = v; mic.candN = 1; }
-  if (!mic.vowel || (mic.candN >= 2 && now >= mic.holdUntil)) {
-    mic.vowel = v; mic.holdUntil = now + 0.065;
+  if (!mic.vowel || (now >= mic.holdUntil && (mic.candN >= 1))) {
+    mic.vowel = v; mic.holdUntil = now + 0.032;
   }
   ctl.vowel = mic.vowel;
 }
 function stopMic() {
-  mic.on = false; mic.open = false; mic.vowel = null; mic.cand = null; mic.candN = 0; mic.rms = 0;
+  mic.on = false; mic.open = false; mic.vowel = null; mic.cand = null; mic.candN = 0; mic.rms = 0; mic.floor = 0.008;
   if (mic.stream) { for (const t of mic.stream.getTracks()) t.stop(); mic.stream = null; }
   if (mic.ctx) { mic.ctx.close().catch(() => {}); mic.ctx = null; }
   mic.analyser = null;
@@ -2669,16 +2679,19 @@ async function toggleMic() {
   if (mic.on) return stopMic();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return flashStatus("mic unsupported");
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    // Disable browser AEC/NS/AGC DSP buffering (~60-110ms lag!) — we only analyze vowels locally with an adaptive noise gate!
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1, latency: 0 },
+    });
     const AC = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AC();
+    const ctx = new AC({ latencyHint: "interactive" });
     if (ctx.state === "suspended") await ctx.resume();
     const src = ctx.createMediaStreamSource(stream), analyser = ctx.createAnalyser();
-    analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.65;
+    analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.22;
     src.connect(analyser);
-    Object.assign(mic, { on: true, ctx, stream, analyser, freq: new Uint8Array(analyser.frequencyBinCount), time: new Float32Array(analyser.fftSize), rms: 0, open: false, vowel: null, cand: null, candN: 0, holdUntil: 0 });
+    Object.assign(mic, { on: true, ctx, stream, analyser, freq: new Uint8Array(analyser.frequencyBinCount), time: new Float32Array(analyser.fftSize), rms: 0, floor: 0.008, open: false, vowel: null, cand: null, candN: 0, holdUntil: 0 });
     press($("mic"), true);
-    flashStatus("mic lip-sync on");
+    flashStatus("mic lip-sync on (low-latency)");
   } catch (e) {
     stopMic();
     flashStatus("mic denied");
@@ -2985,7 +2998,7 @@ function getObsLinkUrl(id) {
   u.searchParams.set("link", id);
   return u.toString();
 }
-const obsHost = { on: false, loading: false, id: null, peer: null, conns: new Set(), lastPoseT: 0, lastBounceSent: -10, bgTimer: null, txSeq: 0 };
+const obsHost = { on: false, loading: false, id: null, peer: null, conns: new Set(), lastPoseT: 0, lastVowelSent: null, lastBounceSent: -10, bgTimer: null, txSeq: 0 };
 const obsViewer = { on: false, id: null, peer: null, conn: null, retryTimer: null, rx: null, posesRx: 0, applyingModel: false };
 window.__obsLinkState = () => ({
   role: LINK_ID ? "viewer" : (obsHost.on ? "host" : "off"),
@@ -3057,10 +3070,12 @@ function buildObsPose(now) {
     wear: outfits,
   };
 }
-function sendObsPose(now) {
+function sendObsPose(now, force = false) {
   if (!obsHost.on || !obsHost.conns.size || !P) return;
-  if (now - obsHost.lastPoseT < 0.016) return;
+  const vowelChanged = ctl.vowel !== obsHost.lastVowelSent;
+  if (!force && !vowelChanged && now - obsHost.lastPoseT < 0.016) return;
   obsHost.lastPoseT = now;
+  obsHost.lastVowelSent = ctl.vowel;
   const pkt = buildObsPose(now);
   for (const conn of obsHost.conns) {
     if (conn.open && !conn.__sendingModel) {
@@ -3117,12 +3132,12 @@ async function startObsHost(copyNow = false, customId = null) {
         obsHost.bgTimer = setInterval(() => {
           if (!obsHost.on || !obsHost.conns.size) return;
           const now = performance.now() / 1000;
-          if (document.hidden) {
+          if (document.hidden || now - obsHost.lastPoseT >= 0.018) {
             if (mic.on) updateMic(now);
-            if (cam.on) updateCam();
+            if (cam.on && document.hidden) updateCam();
           }
-          if (now - obsHost.lastPoseT >= 0.032) sendObsPose(now);
-        }, 33);
+          sendObsPose(now);
+        }, 16);
       }
     });
     peer.on("connection", (conn) => {
