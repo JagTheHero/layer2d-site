@@ -1466,7 +1466,13 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
   if (Hd) { for (const h of Hd.hide) hide.add(h); add = add.concat(Hd.add); }
   const vw = vowelOverride !== undefined ? vowelOverride : (snap ? null : ctl.vowel);
   const vId = vowelPieceId(vw);
-  if (vId && !hide.has("M01")) { hide.add("M01"); add.push(vId); }
+  if (vId && !hide.has("M01")) {
+    const base = (X.pieces[vId] && X.pieces[vId].base) || "M01";
+    hide.add(base);
+    for (const L of P.layers) if (/^M\d/.test(L.id)) hide.add(L.id);
+    if (Array.isArray(X.vowelHide)) for (const h of X.vowelHide) hide.add(h);
+    add.push(vId);
+  }
   const after = {};
   for (const p of add) (after[X.pieces[p].at || X.pieces[p].base] ||= []).push(animated({ id: p, ...X.pieces[p] }, u));
   if (t >= gaze.next) {                    // a glance now and then: mostly small, sometimes well to the side

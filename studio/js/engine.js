@@ -958,8 +958,20 @@ export class Layer2DEngine {
     if (vw) {
       const map = X.vowels || DEFAULT_VOWELS;
       const vid = map[String(vw).toUpperCase()];
-      if (vid && X.pieces && X.pieces[vid] && !hide.has("M01")) {
-        hide.add("M01");
+      const pc = vid && X.pieces && X.pieces[vid];
+      if (pc) {
+        const base = pc.base || "M01";
+        hide.add(base);
+        for (const L of P.layers) {
+          if (/^M\d/.test(L.id)) hide.add(L.id);
+        }
+        if (Array.isArray(X.vowelHide)) {
+          for (const h of X.vowelHide) hide.add(h);
+        }
+        add = add.filter((pid) => {
+          const ap = X.pieces && X.pieces[pid];
+          return !ap || (ap.base !== base && !/^M\d/.test(pid));
+        });
         add.push(vid);
       }
     }
