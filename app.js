@@ -38,18 +38,91 @@
     history.replaceState(null, "", a.getAttribute("href"));
   });
 
+  /* Live WebGL2 embed for public open-source Test Signal card (respects reduced motion). */
+  var prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var liveFrames = new Map();
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.type !== "layer2d:ready") return;
+    liveFrames.forEach(function (container, frame) {
+      if (frame.contentWindow === e.source) container.classList.add("is-live");
+    });
+  });
+
+  function setCardFramesPaused(wantPaused) {
+    liveFrames.forEach(function (container, frame) {
+      if (container.classList.contains("avatar-card") && frame.contentWindow) {
+        try { frame.contentWindow.postMessage({ type: "layer2d:pause", paused: wantPaused }, "*"); } catch (_) {}
+      }
+    });
+  }
+
+  function mountLiveCard(card) {
+    if (card.dataset.liveMounted) return;
+    var url = card.getAttribute("data-live-url");
+    var portrait = card.querySelector(".portrait");
+    if (!url || !portrait) return;
+    card.dataset.liveMounted = "1";
+    var frame = document.createElement("iframe");
+    frame.className = "live-avatar";
+    frame.src = url;
+    frame.title = (card.getAttribute("data-name") || "Avatar") + " live WebGL2 preview";
+    frame.setAttribute("allowtransparency", "true");
+    frame.setAttribute("tabindex", "-1");
+    liveFrames.set(frame, card);
+    portrait.appendChild(frame);
+  }
+
+  if (!prefersReduced) {
+    var liveCards = document.querySelectorAll(".avatar-card[data-live-url]");
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (ent) {
+          if (ent.isIntersecting) {
+            mountLiveCard(ent.target);
+            var f = ent.target.querySelector("iframe.live-avatar");
+            if (f && f.contentWindow && (!dialog || !dialog.open)) {
+              try { f.contentWindow.postMessage({ type: "layer2d:pause", paused: false }, "*"); } catch (_) {}
+            }
+          } else {
+            var f2 = ent.target.querySelector("iframe.live-avatar");
+            if (f2 && f2.contentWindow) {
+              try { f2.contentWindow.postMessage({ type: "layer2d:pause", paused: true }, "*"); } catch (_) {}
+            }
+          }
+        });
+      }, { rootMargin: "600px 0px" });
+      liveCards.forEach(function (c) { io.observe(c); });
+    } else {
+      liveCards.forEach(mountLiveCard);
+    }
+  }
+
   /* Avatar preview lightbox. */
   var dialog = document.getElementById("lightbox");
   if (!dialog || typeof dialog.showModal !== "function") return;
+  var lbStage = dialog.querySelector(".lb-stage");
   var img = document.getElementById("lb-img");
   var nameEl = document.getElementById("lb-name");
   var openLink = document.getElementById("lb-open");
   var studioLink = document.getElementById("lb-studio");
+  var lbFrame = null;
+
+  function clearLightboxLive() {
+    if (lbFrame) {
+      liveFrames.delete(lbFrame);
+      lbFrame.remove();
+      lbFrame = null;
+    }
+    if (lbStage) lbStage.classList.remove("is-live");
+    setCardFramesPaused(false);
+  }
 
   document.querySelectorAll(".avatar-card").forEach(function (card) {
     card.addEventListener("click", function () {
+      clearLightboxLive();
       var name = card.getAttribute("data-name");
       var model = card.getAttribute("data-model");
+      var liveUrl = card.getAttribute("data-live-url");
       img.src = card.getAttribute("data-src");
       img.alt = name;
       nameEl.textContent = name;
@@ -61,9 +134,20 @@
         studioLink.textContent = isDemo ? "Open in Studio" : "Try Demo Studio";
       }
       dialog.showModal();
+      if (isDemo && liveUrl && lbStage && !prefersReduced) {
+        setCardFramesPaused(true);
+        lbFrame = document.createElement("iframe");
+        lbFrame.className = "lb-live";
+        lbFrame.src = liveUrl;
+        lbFrame.title = name + " interactive WebGL2 preview";
+        lbFrame.setAttribute("allowtransparency", "true");
+        liveFrames.set(lbFrame, lbStage);
+        lbStage.insertBefore(lbFrame, lbStage.querySelector(".lb-close"));
+      }
     });
   });
 
+  dialog.addEventListener("close", clearLightboxLive);
   dialog.addEventListener("click", function (e) {
     if (e.target === dialog || e.target.closest("[data-close]")) dialog.close();
   });

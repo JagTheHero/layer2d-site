@@ -14,7 +14,7 @@
 }
 :root[data-theme="dark"] { --bg: #12111b; --panel: #1b1a28; --fg: #ecebf5; --muted: #a29fba; --accent: #9d86ff;
   --line: #2e2c42; color-scheme: dark }
-html, body { height: 100%; }
+html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); display: flex; flex-direction: column; }
 #stage { position: relative; flex: 1; min-height: 0; background: var(--stage); touch-action: none; cursor: move; }
 #stage.checker {
@@ -28,6 +28,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); dis
 :root[data-theme="dark"] #stage.checker {
   background: repeating-conic-gradient(#232230 0% 25%, #2e2d3f 0% 50%) 0 0 / 24px 24px;
 }
+:root.obs { color-scheme: dark; }
 :root.obs, :root.obs body, :root.obs #stage, :root.obs #gl { background: transparent !important; }
 :root.obs #bar, :root.obs #hint, :root.obs #status { display: none !important; }
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -2539,8 +2540,20 @@ async function start(l2dBuffer = null, l2dName = null) {
   $("status").textContent = "";
   window.__ready = true;
   paused = false;
+  if (window.parent && window.parent !== window) {
+    try { window.parent.postMessage({ type: "layer2d:ready", title: document.title }, "*"); } catch {}
+  }
   if (!globalListenersBound) {
     globalListenersBound = true;
+    window.addEventListener("message", (e) => {
+      if (!e.data || e.data.type !== "layer2d:pause") return;
+      const wantPause = Boolean(e.data.paused);
+      if (wantPause) { paused = true; }
+      else if (window.__ready && paused) {
+        paused = false; t0 = null;
+        if (!loopRunning) { loopRunning = true; requestAnimationFrame(loop); }
+      }
+    });
     window.addEventListener("resize", resize);
     // Query-param auto-start for OBS Browser Source & stream automation (?obs=1&cam=1&mic=1&auto=0&face=Happy)
     if (QP.get("auto") === "0") setAuto(false);
