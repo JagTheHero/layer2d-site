@@ -2,6 +2,12 @@
 
 Build a valid, runnable `.l2d` 2D avatar archive from scratch — without Layer2D Studio or proprietary SDKs — and play it immediately in `https://layer2d.com/player/` or OBS Studio (`?obs=1`).
 
+> **Full AI Agent Playbook & Video Transcript:** Read **`https://layer2d.com/for-ai`** (or `curl -fsSL https://layer2d.com/for-ai/guide.md`) for autonomous rigging hints, copying/adapting layers from other models you have access to in the repo, automatic partial masking, proactive human seam check-ins (shoulders, elbows, wrists, partial masking), and the complete timestamped tutorial transcript.
+
+> **Recommended Frontier Models:** Multi-layer 2D rigging & visual QA require top-tier spatial reasoning. Use ONLY **GPT-6.2 Sol / Astra**, **Claude Opus 5.5 / Fable 5.2**, or **Gemini 4 Neon** — smaller/older models generally will not cut it.
+>
+> **Generating Concept Art & Transparent Parts Sheets:** Use **Codex** (built-in image generation), **Grok** (Grok Imagine), or set `export OPENAI_API_KEY="sk-..."` and call **`gpt-image-2.6`** via OpenAI `/v1/images/edits` with `background="transparent"` and `size="3840x2160"` to generate clean 4K transparent PNG parts sheets.
+
 ---
 
 ## 1. Archive Contract (`.l2d`)
@@ -63,11 +69,12 @@ def paint_starter_textures() -> dict[str, tuple[bytes, int, int, float, float]]:
     d.rounded_rectangle((30, 30, 510, 650), radius=180, fill=(38, 42, 56, 255), outline=(20, 22, 30, 255), width=6)
     out["H01"] = (png_bytes(im), im.width, im.height, 600.0, 540.0)
 
-    # Torso (B01)
-    im = Image.new("RGBA", (420, 640), (0, 0, 0, 0))
+    # Torso + Neck (B01 — neck extends solidly behind F01 chin so head never floats!)
+    im = Image.new("RGBA", (420, 740), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle((40, 40, 380, 620), radius=90, fill=(28, 30, 38, 255), outline=(190, 30, 60, 255), width=6)
-    out["B01"] = (png_bytes(im), im.width, im.height, 600.0, 1080.0)
+    d.rounded_rectangle((162, 10, 258, 180), radius=24, fill=(248, 224, 214, 255), outline=(80, 60, 65, 255), width=4)
+    d.rounded_rectangle((40, 140, 380, 720), radius=90, fill=(28, 30, 38, 255), outline=(190, 30, 60, 255), width=6)
+    out["B01"] = (png_bytes(im), im.width, im.height, 600.0, 980.0)
 
     # Face base (F01 — clipTarget for eyes/blush/shadows)
     im = Image.new("RGBA", (360, 420), (0, 0, 0, 0))
@@ -159,9 +166,9 @@ def build_starter_l2d(out_path: Path) -> None:
         },
         "motion": {
             "sway": [3.2, 0.006, 0.011], "stepBounce": 4.0, "breath": [3.6, 0.0045],
-            "bodyFollow": [0.14, 0.28], "bounces": [[7.0, 7.5], 12.0, 0.12], "dur": 13.0,
+            "bodyFollow": [0.12, 0.25], "bodyFollowLR": [0.025, 0.025], "bounces": [[7.0, 7.5], 12.0, 0.12], "dur": 13.0,
             "earSoft": 5.0, "sew": 160.0,
-            "limit": {"bend": 0.28, "lift": 0.06, "earring": 0.6, "arm": 0.08},
+            "limit": {"bend": 0.25, "lift": 0.06, "earring": 0.6, "arm": 0.08},
             "lockSigma": 50.0, "lockLower": [1.5, 0.8, 3.0],
             "springs": {"skirt": [1.1, 0.25, 0.4, 4.0, 0.4], "armR": [0.9, 0.35, 0.7, 8.0, 0.0], "armL": [0.9, 0.35, 0.7, 8.0, 0.0]},
             "timeline": {"a": [[0, 0], [1.8, -0.8], [4.2, 0.8], [6.0, 0]], "roll": [[0, 0], [1.8, 3], [4.2, -3], [6.0, 0]]},
@@ -183,7 +190,7 @@ def build_starter_l2d(out_path: Path) -> None:
                 "Happy":   {"hide": [], "add": [], "move": {}, "eyes": [0.25, 0.25]},
                 "Wink":    {"hide": [], "add": [], "move": {}, "eyes": [1.0, 0.08]},
             },
-            "holds": {}, "raiseSleeves": {}, "eyes": {}, "blink": [2.8, 0.14],
+            "holds": {}, "raiseSleeves": {}, "eyes": {}, "blink": {"hide": [], "add": [], "drop": [], "squash": True},
             "faceTimeline": [], "holdTimeline": [], "vowels": {},
         },
         "hairTint": None, "eyeTint": None,
@@ -264,8 +271,35 @@ if __name__ == "__main__":
 6. **Set `clipTarget: true` on every mask parent.** Nested masks (e.g., iris clipped to sclera `E01R/L`, sclera clipped to face `F01`) rely on topological sorting of `clipFbo` targets. Always ensure `clipTarget: true` is set on every layer referenced by another layer's `clip` or `behind`.
 7. **Author pose-arm holds with explicit rest-arm suppression.** In `expr.holds[name]`, list every replaced resting arm/sleeve/hand layer in `"hide"` AND lock arm spring motion with `"still": ["armR"]` (or `"armL"`).
 8. **Avoid forehead shade overlap & mid-blink captures.** Position mood/gloom overlays high above the browline. When capturing expression sheets in headless Chrome, reset `window.__rigApi.init()` or force `eyes: 1.0` so random blinks never catch a hero expression half-shut.
-9. **Always run a visual Playwright QA sweep before finishing.** Inspect rendered PNG contact sheets across:
+9. **Apply True 3D Partial Masking on Socks, Sleeve Cuffs & Tubular Bands.** Never draw an uncut hollow back-rim ellipse ON TOP of an entering limb or neck. Split every sock (`S01R/L`), sleeve cuff (`J05R/L`, `C04R/L`), or band along its curved front-lip parabola into two pixel-locked layers: `<ID>_back` drawn **BEHIND** the entering limb, and `<ID>` (front lip only) drawn **IN FRONT OF** the limb. Always include `<ID>_back` in `outfits[...].hide` and `body.elbowHalf`.
+10. **Inspect Bare Shoulders (Jacket OFF), Neck-to-Head Smoothness & Open-Arch Shoe Fill.**
+    - **Bare shoulders (`without_jacket`):** Keep the top shoulder ridge & armpit 100% opaque (`alpha = 255`), seat `B03R/L` tangent to `B02`'s collarbone slope (`0 px` V-notch), strip only internal shoulder-socket ink, and map bare arms in `body.elbowHalf`.
+    - **Neck-to-head (`B01 -> F01`):** Trim any flared upper jaw stub on `B01` down to slender neck width AND erase any baked U-shaped dark chin fold/outline on the upper neck interior (which gets exposed on head turns as a weird neck crease) so a completely smooth shaded neck cylinder rises behind the chin at every angle.
+    - **Open-arch shoes (Mary Janes / strapped heels):** Smoothly flare the lower sock instep (`y >= 0.66h`) via `map_coordinates` (never binary dilation) so shaded sock fabric fills the shoe arch wall-to-wall with zero background gaps and zero dark sock outlines visible inside the arch.
+    - **Stem-free, ear-free face oval (`F01`):** `F01` rotates with the head and must NEVER contain a hanging neck stem below the chin outline or baked-on human ears on its sides (which create double ears alongside `F05`/`F06`). Flood-fill `F01`'s interior face skin and strip everything outside the dark cheek/chin outline; extend `B01` upward behind the chin and keep `F05`/`F06` as the sole parallax ear pair.
+    - **Focused straight-ahead eye gaze, sleek eye proportions & sculpted lower lashes (`E01`–`E06`):** Place irises & pupils slightly *inward* of sclera centers (`outward_div <= 0%`) inside a sleek, wide, less-open almond sclera (`iris_w ≈ 42–55%` of sclera width, extending outward toward the sides of the face without pushing inner corners apart), align `E04` highlights to one key-light direction, and sculpt `E06` lower lashes delicately along `E01`'s exact curved lower rim (`50–95%` span).
+    - **Default Full 3D Side-of-Head Stack (`F02tR/L`, `F01sR/L`, `F03tR/L` & Multi-Strand Side Hair `H02s`/`H04s`):** Synthesize sleek side-of-jaw planes (`F01sL`/`F01sR`, `jaw_depth_px=14–20` — never puffy cheek bulges!), clipped rear-to-front directional 3D face shading (`F02tR`/`F02tL`, `clip="F01"`), and sculpted 3/4 noses (`F03tR`/`F03tL`, `clip="F01"` as front `F03` yields to `0`) via `rigkit.face3d` (`face3d.py`). Place `F02tR/L` immediately before `F01sR/L` (shared rear-to-front shadow profile -> `< 1 LSB` seamless transition, bounded monotonic hinge mapping -> `max|D| < 0.25` with zero mid-yaw double chin!). Composite lush multi-strand side-of-skull hair curtains (`H02s`/`H04s`, `w ≈ 340–400px`, `behind: ["F01", "F01sR"/"F01sL"]`) unfolding smoothly rearward on turns behind graceful cheek-framing locks (`H04`, `behind: ["F01", "F01"]`).
+    - **Crisp, non-rubbery body motion (match Test Signal):** Omit `motion.turnChain` on fitted outfits/jackets/belts/skirts (it rubber-warps structured torsos/hips on head turns). Use subtle `bodyFollowLR: [0.025, 0.025]`, `bodyFollow: [0.12, 0.25]`, `limit.bend: 0.25`, and wide `bodyR` so the body sways naturally without squishing.
+11. **Audit Attachment Polish & Auto-Generate Fix Prompts Before Shipping.** Run `python3 polish_audit.py avatar.l2d --out polish_out/ --prompt` (from `layer2d-agent-kit.zip`, or `python3 -m rigkit.polish models/<slug> --prompt`) across ALL outfit toggle states. It scores attachment polish `0–100`, renders zoomed close-ups (`polish_audit.png`), and outputs a copy-paste remediation prompt (`polish_fix_prompt.txt`) with exact layer IDs and pixel errors so even less experienced agents can fix every defect cleanly until `FAIL=0` and `score >= 92`.
+12. **Always run a visual Playwright QA sweep before finishing.** Inspect rendered PNG contact sheets across:
    - Full yaw sweep (`a = -1.0, -0.75, -0.5, -0.25, 0.0, +0.25, +0.5, +0.75, +1.0`) AND fine center sweep (`-0.40 .. +0.40`) to catch any under-bangs or mask pops.
    - Upper-temple chroma gap check at extreme turns (`±1.0` settled 24 frames).
    - 3×3 head pitch grid (`AngleX × AngleY`).
    - All expressions, outfit toggles, pose-arm holds, and OBS `?obs=1` top-corner alpha (`alpha === 0`).
+
+---
+
+## 5. User Visual QA Checklist & Copy-Paste Prompts to Fix AI Defects
+
+Reviewing an AI-generated `.l2d` avatar? First run `python3 polish_audit.py avatar.l2d --out polish_out/ --prompt` and paste `polish_fix_prompt.txt` back to your AI agent. Also watch visually for these common defects and use these exact prompts:
+
+- **Hollow sock/sleeve/band back rim drawn over skin:** *"Split the socks (`S01R/L`) and sleeve cuffs (`J05R/L`) with partial masking: move the hollow back inner rim to `<ID>_back` behind the entering limb and keep only the curved front lip on `<ID>` in front. Add `<ID>_back` to `outfits` and `body.elbowHalf`."*
+- **Bare shoulder gap/V-notch when toggling jacket OFF:** *"Hide the jacket and hair, then inspect `B02`/`B03R/L`. Keep the top shoulder ridge & armpit 100% opaque (`alpha=255`), lower/seat `B03R/L` tangent to `B02`'s collarbone slope so notch=0px, and map `B03/B04` in `body.elbowHalf`."*
+- **Non-smooth stair-step or gap between neck & head:** *"Trim the flared upper jaw stub off the top of neck `B01` down to slender mid-neck width so `B01` enters behind `F01`'s chin smoothly with zero horizontal step."*
+- **Socks not filling open-arch shoes (Mary Janes) wall-to-wall:** *"Composite `S02R/L` on a bright green backdrop. Smoothly flare `S01R/L`'s lower instep (`y >= 0.66h`) via `map_coordinates` so real shaded sock fabric fills the shoe arch wall-to-wall with zero gaps and zero internal sock outline."*
+- **Face layer neck stem or double human ears (`F01` + `F05/F06`):** *"Inspect `F01` alone on green. Strip any hanging neck stem below the chin jawline (so nothing swings off `B01` on head turns) and erase baked-on ears on `F01`'s sides so ONLY separate `F05`/`F06` ears remain."*
+- **Unfocused eyes, eye proportions, or flat/detached lower lash:** *"Run `polish_audit.py --prompt` to check `eye_gaze_focus` and `lower_lash`. Shift irises & pupils (`E02/E03`) inward toward the nose bridge (`outward_div <= 0%`), widen `E01` outward at a sleeker less-open height with crisp smaller irises, align `E04` highlights to one key light, and sculpt `E06` snugly along `E01`'s curved lower rim."*
+- **Flat, puffy, or thin side of head on 3/4 head turns:** *"Build the full 3D side-of-head stack via `rigkit.face3d`: calibrate `F01`'s front contour 1:1 to `placed/F01.png` with a slender straight-angled ~38° turned jawline, add clipped rear-to-front directional face shading (`F02tR/L`) + sleek side-of-jaw planes (`F01sL/R`, `jaw_depth_px=14–20`, placed right after `F02tR/L`) + 3/4 nose (`F03tR/L` while `F03` yields to `0`), and composite lush multi-strand side-of-skull hair curtains (`H02s/H04s`) unfolding rearward behind cheek-framing locks (`H04`)."*
+- **Rubbery body warping when moving or turning:** *"Remove `body.turnChain` and match Test Signal's solid body physics: `bodyFollowLR: [0.025, 0.025]`, `bodyFollow: [0.12, 0.25]`, `bodyR: 920`, `limit.bend: 0.25`, and subtle `turnBody` (`±8px`)."*
+- **Oversized choker/belt overhanging into air or misaligned limbs:** *"Resize choker `A03` to `1.00–1.10×` neck width, tuck halter straps behind the choker, seat belt `K01` flush on `K02`, and anchor-solve all limb joints (`fit_anchor_segment`) within `< 2px`."*
+- **Brow/hair pops or ear drift on head turns:** *"Run `qa_runner.py` and inspect `qa_turns_center.png` and `qa_pitch_grid.png`. Lock hair `op = 1.0`, lock depth shells to `behind = 1.0` across all yaw angles, put crown fill behind animal ears, and pad quads `>= 320px`."*

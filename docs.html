@@ -26,6 +26,7 @@
         <a href="player/?model=test-signal.l2d">Player</a>
         <a href="./#avatars">Avatars</a>
         <a href="docs.html" aria-current="page">Docs</a>
+        <a href="for-ai/">For AI</a>
         <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
       </nav>
       <a class="btn btn-primary" href="player/?model=test-signal.l2d">Launch Player</a>
@@ -39,6 +40,7 @@
       </div>
       <div class="doc-layout">
         <nav class="toc" aria-label="On this page">
+          <a href="for-ai/">For AI playbook &amp; transcript →</a>
           <a href="#agent-kit">Agent skill &amp; kit</a>
           <a href="#build-l2d">Build a .l2d</a>
           <a href="#pack-schema">pack.json schema</a>
@@ -57,10 +59,12 @@
             <p><strong>Recommended frontier models:</strong> Multi-layer rigging and visual QA require high-precision spatial reasoning. We recommend <strong>only GPT-6.2 Sol / Astra, Claude Opus 5.5 / Fable 5.2, or Gemini 4 Neon</strong> — smaller or older models generally will not cut it.</p>
             <p><strong>Generating layered character art:</strong> Use <strong>Codex</strong> (built-in image generation), <strong>Grok</strong> (Grok Imagine), or set <code>export OPENAI_API_KEY="sk-..."</code> and call <code>gpt-image-2.6</code> via OpenAI <code>/v1/images/edits</code> with <code>background="transparent"</code> and <code>size="3840x2160"</code> for clean 4K transparent PNG parts sheets.</p>
             <div class="actions" style="display:flex;gap:12px;flex-wrap:wrap;margin:0 0 18px;">
-              <a class="btn btn-primary" href="downloads/layer2d-agent-kit.zip">Download Testing Kit (.zip)</a>
+              <a class="btn btn-primary" href="for-ai/">For AI Agents (/for-ai)</a>
+              <a class="btn btn-ghost" href="downloads/layer2d-agent-kit.zip">Download Testing Kit (.zip)</a>
               <a class="btn btn-ghost" href="skills/layer2d-avatar-builder/SKILL.md">Agent SKILL.md</a>
               <a class="btn btn-ghost" href="agent-guide.md">Raw Markdown Guide</a>
             </div>
+            <p><strong>Building with an AI coding agent?</strong> Point your agent straight to <a href="for-ai/"><code>https://layer2d.com/for-ai</code></a> (or raw Markdown <a href="for-ai/guide.md"><code>layer2d.com/for-ai/guide.md</code></a>) for the full tutorial transcript, autonomous rigging &amp; partial-masking playbook, repo layer reuse hints, and copy-paste human QA check-in prompts.</p>
             <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Download and unpack the offline agent testing kit</span><span class="ln">curl -fsSL https://layer2d.com/downloads/layer2d-agent-kit.zip -o layer2d-agent-kit.zip</span><span class="ln">unzip -o layer2d-agent-kit.zip -d layer2d-kit &amp;&amp; cd layer2d-kit</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 1. Build a valid .l2d bundle from scratch</span><span class="ln">python3 starter_builder.py starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 2. Validate archive paths, manifest stats, textures &amp; SHA-256 digests</span><span class="ln">python3 l2d_tools.py validate starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 3. Audit partial masking, bare shoulders, neck-to-head, shoe arch fill &amp; limb alignment (+ copy-paste fix prompt!)</span><span class="ln">python3 polish_audit.py starter.l2d --out polish_out/ --prompt</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 4. Run offline WebGL2 Playwright QA (OBS alpha + wide/center turn sweeps + pitch + expressions)</span><span class="ln">python3 qa_runner.py starter.l2d --out qa_out/</span></code></pre>
             <p>Install the skill directly into an agent workspace at <code>.agents/skills/layer2d-avatar-builder/SKILL.md</code> using <code>curl -fsSL https://layer2d.com/skills/layer2d-avatar-builder/SKILL.md</code>.</p>
           </section>
@@ -229,6 +233,7 @@
         <a href="player/?model=test-signal.l2d">Player</a>
         <a href="./#avatars">Avatars</a>
         <a href="docs.html">Docs</a>
+        <a href="for-ai/">For AI</a>
         <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
       </nav>
     </div>

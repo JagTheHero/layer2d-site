@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>For AI Agents — Layer2D</title>
+  <meta name="description" content="Complete Layer2D AI agent playbook: autonomous rigging rules, reusing layers from repo models, proactive human visual QA prompts (shoulders, elbows, wrists, partial masking), and full timestamped tutorial video transcript.">
+  <meta name="theme-color" content="#0c0d10">
+  <link rel="icon" type="image/svg+xml" href="../favicon.svg">
+  <link rel="icon" type="image/x-icon" href="../favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+  <link rel="canonical" href="https://layer2d.com/for-ai/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../styles.css">
+  <script src="../app.js" defer></script>
+  <style>
+    .ai-lead { font-size: 18px; color: var(--muted); max-width: 68ch; margin: 14px 0 0; line-height: 1.5; }
+    .ai-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin-bottom: 12px; padding: 4px 11px; border-radius: 999px;
+      font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+      color: #fda4af; background: rgba(190, 30, 60, 0.16); border: 1px solid rgba(227, 43, 79, 0.45);
+    }
+    .ai-callout {
+      padding: 16px 18px; margin: 0 0 18px; border-radius: 6px;
+      background: var(--surface); border: 1px solid var(--line-strong); border-left: 3px solid var(--crimson);
+    }
+    .ai-callout.mint { border-left-color: #4ade80; background: linear-gradient(135deg, rgba(74, 222, 128, 0.07), var(--surface) 60%); }
+    .ai-callout.cyan { border-left-color: #38bdf8; background: linear-gradient(135deg, rgba(56, 189, 248, 0.07), var(--surface) 60%); }
+    .ai-callout p:last-child, .ai-callout ul:last-child { margin-bottom: 0; }
+    .hint-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0 0 18px; }
+    .hint-card {
+      padding: 16px 18px; border-radius: 6px;
+      background: var(--surface); border: 1px solid var(--line);
+    }
+    .hint-card h3 { margin: 0 0 8px; font-size: 16px; color: var(--text); }
+    .hint-card p { margin: 0; font-size: 14.5px; line-height: 1.5; }
+    .prompt-wrap { position: relative; margin: 0 0 18px; }
+    .prompt-wrap .copy-btn {
+      position: absolute; top: 10px; right: 10px; z-index: 2;
+      height: 30px; padding: 0 12px; border-radius: 4px; cursor: pointer;
+      font-family: var(--mono); font-size: 12px; font-weight: 600;
+      color: var(--text); background: var(--surface-2); border: 1px solid var(--line-strong);
+      transition: border-color 160ms var(--ease), background-color 160ms var(--ease);
+    }
+    .prompt-wrap .copy-btn:hover { border-color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.08); }
+    .prompt-pre {
+      margin: 0; padding: 18px 20px; border-radius: 6px;
+      background: var(--bg); border: 1px solid var(--line-strong);
+      font-family: var(--mono); font-size: 13px; line-height: 1.62; color: #e6e7ea;
+      white-space: pre-wrap; overflow-x: auto;
+    }
+    .doc-body table.wrap-col td:first-child { white-space: normal; min-width: 175px; }
+    .transcript-chapter {
+      margin: 0 0 22px; padding: 18px 20px; border-radius: 6px;
+      background: var(--surface); border: 1px solid var(--line);
+    }
+    .transcript-chapter h3 {
+      margin: 0 0 12px; font-size: 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .ts-pill {
+      font-family: var(--mono); font-size: 12px; font-weight: 600;
+      color: #fda4af; background: rgba(190, 30, 60, 0.16); border: 1px solid rgba(227, 43, 79, 0.38);
+      padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+    }
+    .ts-seg { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; margin-bottom: 12px; align-items: baseline; }
+    .ts-seg:last-child { margin-bottom: 0; }
+    .ts-time { font-family: var(--mono); font-size: 12.5px; color: #9cc4ff; font-weight: 600; }
+    .ts-seg p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--muted); }
+    @media (max-width: 720px) {
+      .hint-grid { grid-template-columns: 1fr; }
+      .ts-seg { grid-template-columns: 1fr; gap: 4px; }
+    }
+  </style>
+</head>
+<body class="doc">
+  <header class="site-header">
+    <div class="wrap">
+      <a class="wordmark" href="../"><img class="brand-mark" src="../assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
+      <nav class="nav" aria-label="Primary">
+        <a href="../format.html">Format</a>
+        <a href="../studio/">Studio</a>
+        <a href="../player/?model=test-signal.l2d">Player</a>
+        <a href="../#avatars">Avatars</a>
+        <a href="../docs.html">Docs</a>
+        <a href="./" aria-current="page">For AI</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <a class="btn btn-primary" href="../player/?model=test-signal.l2d">Launch Player</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <div class="doc-head">
+        <div class="ai-badge">AI Agent Playbook · layer2d/v1</div>
+        <h1>For AI Agents</h1>
+        <p class="ai-lead">Everything an AI coding agent needs to build, rig, partial-mask, visually audit, and polish a studio-grade <code>.l2d</code> avatar <strong>autonomously</strong> — including how to reuse layers from other models in the repo, how to proactively prompt the human on seams &amp; partial masking, and the complete timestamped tutorial video transcript.</p>
+        <div class="actions" style="margin-top:22px;gap:12px;">
+          <a class="btn btn-primary" href="guide.md">Raw Markdown (for curl / fetch)</a>
+          <a class="btn btn-ghost" href="../downloads/layer2d-agent-kit.zip">Download Agent Kit (.zip)</a>
+          <a class="btn btn-ghost" href="../skills/layer2d-avatar-builder/SKILL.md">SKILL.md</a>
+          <a class="btn btn-ghost" href="../agent-guide.md">Minimal Builder Spec</a>
+        </div>
+      </div>
+
+      <div class="doc-layout">
+        <nav class="toc" aria-label="On this page">
+          <a href="#mission">Autonomous mission</a>
+          <a href="#reuse-repo">Copy layers from repo</a>
+          <a href="#autonomous-hints">Autonomous rigging hints</a>
+          <a href="#partial-masking">Partial masking guide</a>
+          <a href="#seams-joints">Shoulders, elbows &amp; wrists</a>
+          <a href="#face-3d-neck">Eyes, 3D head &amp; neck</a>
+          <a href="#prompt-human">Prompting the human</a>
+          <a href="#qa-gates">Mandatory QA gates</a>
+          <a href="#transcript">Full video transcript</a>
+        </nav>
+
+        <div class="doc-body">
+          <section id="mission">
+            <h2>1. Your Mission: Do 95% Autonomously, Then Guide the Human</h2>
+            <div class="ai-callout mint">
+              <p><strong>Core operating rule for AI agents:</strong> Never dump a raw first assembly onto the user and hope they figure out what's wrong. Run <code>l2d_tools.py validate</code>, <code>polish_audit.py --prompt</code>, and <code>qa_runner.py</code> yourself, inspect every zoomed close-up image directly with vision, fix every structural seam, partial-mask tubular openings, build the 3D side-of-head stack, and reach <code>FAIL=0</code> / <code>100 A+</code> <em>before</em> handing back a preview. Then proactively ask the user to inspect specific high-leverage spots — and tell them you will fix whatever they spot.</p>
+            </div>
+            <p><strong>Plain-text fetch for agents:</strong> If you are reading this from a terminal or tool call, fetch the zero-HTML Markdown mirror directly:</p>
+            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Fetch this entire playbook + full transcript as clean Markdown</span><span class="ln">curl -fsSL https://layer2d.com/for-ai/guide.md</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> Install the Agent Skill + 197 KB offline Agent Testing Kit (9 files)</span><span class="ln">mkdir -p .agents/skills/layer2d-avatar-builder</span><span class="ln">curl -fsSL https://layer2d.com/skills/layer2d-avatar-builder/SKILL.md -o .agents/skills/layer2d-avatar-builder/SKILL.md</span><span class="ln">curl -fsSL https://layer2d.com/downloads/layer2d-agent-kit.zip -o layer2d-agent-kit.zip</span><span class="ln">unzip -o layer2d-agent-kit.zip -d layer2d-kit &amp;&amp; cd layer2d-kit</span></code></pre>
+            <ul>
+              <li><strong>Frontier models recommended:</strong> Multi-layer 2D spatial rigging and visual QA require frontier-class spatial reasoning — use <strong>GPT-6.2 Sol / Astra</strong>, <strong>Claude Opus 5.5 / Fable 5.2</strong>, or <strong>Gemini 4 Neon</strong>.</li>
+              <li><strong>Layered 4K art generation:</strong> Use <strong>Codex</strong> (built-in image gen), <strong>Grok</strong> (Grok Imagine), or export <code>OPENAI_API_KEY</code> and call <code>gpt-image-2.6</code> via <code>/v1/images/edits</code> with <code>background="transparent"</code> and <code>size="3840x2160"</code>.</li>
+            </ul>
+          </section>
+
+          <section id="reuse-repo">
+            <h2>2. You Can Copy &amp; Adapt Layers from Other Models in the Repo</h2>
+            <div class="ai-callout cyan">
+              <p><strong>Important hint:</strong> Do <em>not</em> reinvent every layer, expression piece, rig config, or shader pattern from scratch! If you have access to other <code>.l2d</code> bundles, unpacked <code>models/*/viewer/</code> rigs, <code>rigkit/</code> scripts, or layered <code>.psd</code> avatars in the workspace or repository (such as MIT-licensed <code>nori.l2d</code>, <code>test-signal.l2d</code>, <code>starter.l2d</code>, or any other avatar in the user's repo), <strong>inspect them and copy/adapt proven layers and rig patterns directly</strong>.</p>
+            </div>
+            <p>Unpack any reference model in seconds to inspect its exact textures, draw stack, masks, and motion physics:</p>
+            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Inspect &amp; unpack an existing .l2d model in your workspace to study or borrow layers</span><span class="ln">python3 l2d_tools.py inspect path/to/reference.l2d</span><span class="ln">python3 l2d_tools.py unpack  path/to/reference.l2d /tmp/ref_unpacked/</span><span class="ln">ls /tmp/ref_unpacked/tex/   <span class="tok-p"># exact layer textures, masks, blink/vowel pieces &amp; FX flipbooks</span></span></code></pre>
+            <div class="hint-grid">
+              <div class="hint-card">
+                <h3>What to Copy / Adapt Directly</h3>
+                <p>Eye sparkle highlights (<code>E04</code>/<code>E04b</code>), cheek blush gradients, forehead gloom/mood shades, flipbook FX atlases (sparkles, sweatdrops, tears, hearts), AEIOU vowel mouth templates (<code>M04–M08</code>), and clean blink/expression piece definitions — simply tint/scale to match your target character.</p>
+              </div>
+              <div class="hint-card">
+                <h3>Anatomical &amp; Garment Blueprints</h3>
+                <p>Study working bare shoulder slopes (<code>B02</code>/<code>B03</code>), neck-to-chin tapers (<code>B01</code>), hand/wrist sprites (<code>G01</code>), flared open-arch sock insteps (<code>S01</code>), and partial-masked <code>&lt;ID&gt;_back</code> + <code>&lt;ID&gt;</code> cuff/sock pairs from existing repo models to match proven proportions and anchor geometry.</p>
+              </div>
+              <div class="hint-card">
+                <h3>Copy Working Rig &amp; Physics Presets</h3>
+                <p>Reuse proven <code>pack.json</code> settings directly: Test Signal's solid non-rubbery <code>motion</code> block (<code>bodyFollowLR: [0.025, 0.025]</code>, <code>limit.bend: 0.25</code>, no <code>turnChain</code>), <code>pitchGroups</code>, <code>expr.blink</code> object format, rigid <code>pack.tail</code> config, and <code>face3d.py</code> 3D side-of-head recipes.</p>
+              </div>
+              <div class="hint-card">
+                <h3>Respect Ownership &amp; Match Style</h3>
+                <p>Reuse freely from MIT-licensed repo models (<code>nori.l2d</code>, <code>test-signal.l2d</code>, <code>starter.l2d</code>) or the user's own local models in the workspace. Always hue-match, line-weight-match, and scale copied layers so they blend invisibly into the target avatar's art style.</p>
+              </div>
+            </div>
+          </section>
+
+          <section id="autonomous-hints">
+            <h2>3. High-Impact Rigging Hints (Do All of These Without Being Asked)</h2>
+            <ul>
+              <li><strong>Solve every limb and garment from real opaque end-anchors (never bounding-box centers).</strong> Cut sprites for arms, sleeves, hands, socks, and shoes often have slanted or off-center openings (e.g., wrist at <code>0.73w</code>, shoe opening at <code>0.42w</code>). Measure true opaque top/bottom centerlines and cross-section widths, then solve <code>(cx, cy, w, h, rot)</code> analytically so parent exit and child entry land within <code>&lt; 2 px</code> with matching widths and zero dark cut-border seam lines.</li>
+              <li><strong>Never crossfade hair (<code>op = 1.0</code> always).</strong> Alpha-fading hair looks ghostly on turns. Stack solid physical depth shells — back (<code>H01</code>), crown fill behind animal ears (<code>H02c</code>), side-of-skull curtains (<code>H02s</code>/<code>H04s</code>), under-bangs (<code>H03u</code>), cheek framing locks (<code>H04</code>), and front bangs (<code>H03C/R/L</code>) — with signed horizontal parallax.</li>
+              <li><strong>Never flip binary <code>behind</code> near center yaw (<code>a = 0</code>) over the forehead/brows.</strong> Lock depth shells (<code>H02c/H03u/H02s/H04s</code>) permanently to <code>behind = 1.0</code> across every yaw angle, keep <code>H03u</code> outside the eyebrow X-band, and delay far-side <code>H04</code> flips until <code>|u| &gt;= 0.28</code>.</li>
+              <li><strong>Protect kemonomimi / animal ear fluff &amp; pad warped quads generously.</strong> Draw crown fill (<code>H02c</code>) <em>behind</em> animal ears with its top below ear roots, set <code>pitchGroups[earId] = "ear"</code>, and keep <code>pad = 320–420 px</code> so warped tips never clip.</li>
+              <li><strong>Remember inverse warp grid <code>D</code> sign convention.</strong> The shader samples <code>g_tex = g_screen + D(g_screen)</code>. To move rendered pixels visually by <code>+Δg</code>, <strong>subtract</strong> <code>Δg</code> from <code>D</code>.</li>
+              <li><strong>Rigid pelvis rotation for fluffy tails — never wavy spring chains.</strong> Use <code>pack.tail = {"id": "T01", "pivot": [px, py], "amp": 0.165, "freq": 2.45, "happyFaces": ["Happy", "Starry"]}</code> with zero per-frame non-uniform <code>sx/sy</code> stretch.</li>
+              <li><strong>Keep body motion crisp &amp; non-rubbery.</strong> Omit <code>motion.turnChain</code> on fitted jackets, belts, or skirts (it squishes structured clothes when the head turns). Use <code>bodyFollowLR: [0.025, 0.025]</code>, <code>bodyFollow: [0.12, 0.25]</code>, <code>limit.bend: 0.25</code>, and wide <code>bodyR</code>.</li>
+              <li><strong>Always wire <code>clipTarget: true</code>, <code>expr.blink</code> object &amp; <code>body.elbowHalf</code>.</strong> Every mask parent (<code>F01</code>, <code>E01R/L</code>) needs <code>clipTarget: true</code>. <code>expr.blink</code> MUST be an object <code>{"hide":[], "add":[], "drop":[], "squash": true}</code> (never an array). Include bare arms, sleeves, AND <code>*_back</code> cuff layers in <code>body.elbowHalf</code> and <code>outfits[...].hide</code>.</li>
+              <li><strong>Check open-arch shoes (Mary Janes, heels, strapped shoes) on bright green.</strong> Never leave narrow sock ankles ending inside an open shoe arch or dark sock outlines cutting across the arch. Smoothly flare the lower sock instep (<code>y &gt;= 0.66h</code>) using <code>scipy.ndimage.map_coordinates</code> (never binary dilation!) so shaded sock fabric fills the arch wall-to-wall behind both shoe walls and the strap.</li>
+            </ul>
+          </section>
+
+          <section id="partial-masking">
+            <h2>4. Automatic Partial Masking Protocol (Do This Pass Yourself!)</h2>
+            <p>Whenever a 3D cylindrical garment or accessory wraps around an entering limb or neck — <strong>socks, sleeve cuffs, short sleeves, collars, chokers, wristbands, bracelets, leg warmers, belts, ribbons, boot tops, or open shoe rims</strong> — drawing the single flat cutout on top of skin leaves an ugly hollow back-rim ellipse floating in front of the arm, leg, or neck like a flat sticker.</p>
+            <div class="ai-callout">
+              <p><strong>How to split &amp; partial-mask automatically:</strong></p>
+              <ol style="margin:6px 0 0;padding-left:20px;color:var(--muted);">
+                <li>Detect the curved <strong>front-lip parabola</strong> across the opening of the garment/cuff sprite (where the front edge passes in front of the skin).</li>
+                <li>Split the sprite into two pixel-locked RGBA layers sharing identical canvas size and affine placement:
+                  <ul>
+                    <li><code>&lt;ID&gt;_back</code> (everything above/behind the front lip — the hollow dark interior &amp; back rim) placed <strong>BEHIND</strong> the entering limb/neck in <code>pack.layers[]</code>.</li>
+                    <li><code>&lt;ID&gt;</code> (the crisp front lip and body below it) placed <strong>IN FRONT OF</strong> the entering limb/neck.</li>
+                  </ul>
+                </li>
+                <li>Register <code>&lt;ID&gt;_back</code> in the same <code>outfits[...].hide</code> toggle list AND the same <code>body.elbowHalf</code> / <code>chains</code> / <code>kind</code> bucket as <code>&lt;ID&gt;</code> so toggling jackets or bending elbows never leaves a detached ghost rim behind!</li>
+              </ol>
+            </div>
+            <p><strong>Even after your first pass:</strong> always explicitly ask the user if any other accessory, sleeve, collar, strap, or sock still needs partial masking — and reassure them you will split and mask it immediately.</p>
+          </section>
+
+          <section id="seams-joints">
+            <h2>5. Shoulder, Elbow, Wrist &amp; Garment Drape Checklist</h2>
+            <div class="table-scroll">
+              <table class="wrap-col">
+                <thead><tr><th>Seam / Area</th><th>What Goes Wrong</th><th>Exact Autonomous Fix</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Bare shoulders (Jacket OFF)</strong></td>
+                    <td>20–30px V-notch between <code>B02</code> and <code>B03R/L</code>, translucent white alpha holes on shoulder ridge/armpit, or dark socket ink strokes.</td>
+                    <td>Render with hair AND outer jacket hidden. Keep outer shoulder crest &amp; armpit 100% opaque (<code>alpha=255</code>), seat <code>B03R/L</code> tangent to <code>B02</code>'s collarbone slope (<code>0px</code> V-notch), strip only internal overlapping ink, and feather strictly inside <code>B02</code>'s opaque chest.</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Sweater / cardigan shoulders (Jacket ON)</strong></td>
+                    <td>Puffy floating shoulder peaks hovering above the bare shoulder slope, or a stray chest flap/tab sticking out beside the collar trim.</td>
+                    <td>Flatten high inner collar peaks on shoulder panels (<code>J03</code>/<code>J04</code>), lower outer sleeve caps onto <code>B02</code>'s bare shoulder slope so zero air gap hovers above the collarbone, and trim protruding upper-inner chest tabs cleanly behind the collar edge.</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Elbow seams (ON &amp; OFF)</strong></td>
+                    <td>Bare forearm (<code>B04R/L</code>) detaches from upper arm (<code>B03R/L</code>) when toggling a jacket OFF, or visible cut-border ink slices across the elbow.</td>
+                    <td>Anchor-solve <code>B03 → B04</code> opaque endpoints within <code>&lt; 2px</code> with matched widths, strip cut-edge ink along the joint overlap, and map BOTH bare arms and jacket sleeves in <code>body.elbowHalf</code>.</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Wrist seams &amp; sleeve cuffs</strong></td>
+                    <td>Hands (<code>G01R/L</code>) float off cuffs, wrist anchor differs between jacket ON vs OFF, or uncut hollow cuff back rim draws over the wrist.</td>
+                    <td>Unify hand wrist centerlines across bare forearms and sleeved cuffs, split cuffs into <code>J05_back</code> (behind wrist) + <code>J05</code> (front lip in front), and verify with a close-up wrist crop in both outfit states.</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Camisole straps &amp; chokers</strong></td>
+                    <td>Choker hangs wide into empty air; camisole straps stop short, shoot too high, or aim at the choker when they should drape over the shoulders.</td>
+                    <td>Size choker <code>A03</code> to <code>1.00–1.10×</code> neck width centered on <code>B01</code>. Inspect concept art carefully: drape camisole/tank straps cleanly over the <strong>inner shoulders/trapezius</strong> (below the choker) unless it is explicitly a neck-tied halter!</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="face-3d-neck">
+            <h2>6. Face, Eyes, 3D Side-of-Head &amp; Neck Polish</h2>
+            <div class="hint-grid">
+              <div class="hint-card">
+                <h3>Stem-Free, Ear-Free Face (<code>F01</code>)</h3>
+                <p>Inspect <code>F01</code> alone on bright green. Flood-fill interior face skin and strip BOTH any hanging pink neck stem below the chin (which swings off <code>B01</code> on turns) AND any baked-on human ears on <code>F01</code>'s sides so only separate <code>F05/F06</code> ears remain.</p>
+              </div>
+              <div class="hint-card">
+                <h3>Crease-Free Neck Cylinder (<code>B01</code>)</h3>
+                <p>Trim flared upper jaw stubs off <code>B01</code> down to slender mid-neck width AND paint out any baked U-shaped front-chin outline/fold on the upper neck interior (<code>y = 0..120px</code>) so no weird horizontal crease appears when the head turns!</p>
+              </div>
+              <div class="hint-card">
+                <h3>Eyes, Tall Irises &amp; Sculpted Lashes</h3>
+                <p>Keep irises/pupils (<code>E02/E03</code>) centered slightly inward (<code>outward_div &lt;= 0%</code>, never wall-eyed), sleek wide almond sclera (<code>E01</code>), slightly vertical-oval irises (e.g. <code>~1.3×</code> taller than wide when matching the anime style), unified key-light <code>E04</code> sparkles, and curved <code>E06</code> lower lashes wrapped tightly along <code>E01</code>'s rim.</p>
+              </div>
+              <div class="hint-card">
+                <h3>Full 3D Side-of-Head Stack (<code>face3d.py</code>)</h3>
+                <p>Calibrate a strictly convex ~38° turned jawline on <code>F01</code> (zero side-chin dent!), add clipped rear-to-front cheek shading (<code>F02tR/L</code>) right before bounded monotonic side-jaw planes (<code>F01sL/R</code>, <code>jaw_depth_px=14–20</code>, <code>max|D| &lt;= 0.24</code>, zero mid-yaw double chin), sculpted 3/4 nose (<code>F03tR/L</code> as front <code>F03 → 0</code>), and lush multi-strand side hair (<code>H02s/H04s</code>) behind <code>H04</code>.</p>
+              </div>
+            </div>
+          </section>
+
+          <section id="prompt-human">
+            <h2>7. Proactively Prompt the User for Visual Polish (Copy-Paste Handoff)</h2>
+            <p>Even after your autonomous build hits <strong><code>100.0/100 (A+)</code></strong> with <code>0</code> errors in <code>polish_audit.py</code> and <code>qa_runner.py</code>, subtle art-direction details benefit hugely from 1–3 fast human glances. <strong>Never end with just "Done!"</strong> — render clean close-ups (jacket ON, jacket OFF, front face, and 3/4 turns at <code>a = -1.0, -0.5, +1.0</code>) and send a structured check-in like the template below so the user knows exactly where to look and knows you'll fix anything they spot:</p>
+            <div class="prompt-wrap">
+              <button class="copy-btn" type="button" data-copy="handoff-template">Copy</button>
+              <pre class="prompt-pre" id="handoff-template">I've built and verified &lt;Avatar&gt;.l2d (l2d_tools validate: OK, polish_audit: 100/100 A+, qa_runner: 0 errors, OBS alpha=0).
+
+Before we call it final, please take a quick look at these specific spots — point out anything that looks off and I'll fix it right away:
+
+1. **Shoulder &amp; elbow seams (jacket/outerwear ON and OFF):** Do the outer shoulders sit flat on the collarbone with no protruding flaps, and do the bare shoulders and elbows join seamlessly when the outer layer is toggled OFF?
+2. **Wrist seams &amp; hands:** Do the hands tuck cleanly into the sleeve cuffs / bare wrists with natural width and zero floating gap?
+3. **Parts that need partial masking:** Check socks, sleeve cuffs, collars, chokers, straps, wristbands, belts, and shoe openings — if any edge looks like a flat sticker sitting on top of skin (instead of wrapping behind and in front of the limb), let me know and **I will split and partial-mask it for you**.
+4. **3/4 head turns, chin &amp; neck (`a = ±0.5, ±1.0`):** Does the side-of-head silhouette look smooth with no dent in the chin, no weird crease/fold on the neck, and full side hair?
+5. **Face, eyes &amp; strap drape:** Check eye shape, iris proportions/gaze focus, eyelashes, ears, and whether any straps drape over the right part of the shoulders vs neck.
+6. **Shoes, accessories &amp; motion:** Check open-arch shoes (wall-to-wall sock fill), choker/belt snugness, and body motion while turning.
+
+Tell me any tweaks you want — even tiny ones — and I'll iterate until it's spotless!</pre>
+            </div>
+          </section>
+
+          <section id="qa-gates">
+            <h2>8. Mandatory Verification Commands (Gate Every Iteration)</h2>
+            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> 1. Cryptographic &amp; structural contract gate (must exit 0, "ok": true)</span><span class="ln">python3 l2d_tools.py validate avatar.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 2. Automated attachment, partial-masking, shoulder, neck, face &amp; shoe audit + fix prompt</span><span class="ln">python3 polish_audit.py avatar.l2d --out polish_out/ --prompt</span><span class="ln"><span class="tok-p">#</span>    -> inspect polish_out/polish_audit.png &amp; fix every item in polish_out/polish_fix_prompt.txt until FAIL=0</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 3. Headless WebGL2 Playwright visual &amp; OBS alpha QA (4 contact sheets + qa_report.json)</span><span class="ln">python3 qa_runner.py avatar.l2d --out qa_out/</span><span class="ln"><span class="tok-p">#</span>    -> visually inspect qa_turns_wide.png, qa_turns_center.png, qa_pitch_grid.png &amp; qa_expressions.png</span></code></pre>
+            <p>See <a href="../docs.html"><code>layer2d.com/docs.html</code></a> for full schema tables, Studio/Player keyboard shortcuts, and OBS Link setup, and <a href="../format.html"><code>layer2d.com/format.html</code></a> for the container specification.</p>
+          </section>
+
+          <section id="transcript">
+            <h2>9. Complete Tutorial Video Transcript (9m 48s · Narrated by Nori)</h2>
+            <p>Full timestamped transcript of <em>Build a 2D VTuber Avatar with an AI Agent — Layer2D (.l2d) Complete Tutorial</em>, narrated by Nori herself (every chapter, including all four real-world polishing iterations from <code>0/100 F</code> to <code>100/100 A+</code> across 54 checks):</p>
+
+            <div class="transcript-chapter">
+              <h3><span>Intro — Meet Nori &amp; Layer2D</span><span class="ts-pill">00:00 – 00:47</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">00:00</span>
+                <p>Hi everyone! I'm Nori! What if an AI coding agent could design, rig, validate, and ship a whole 2D VTuber avatar — like <em>me!</em> — completely from scratch, with zero proprietary SDKs? Meet Layer2D: an open, MIT-licensed avatar format, browser Studio, and WebGL2 OBS Player built specifically for AI agents!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">00:25</span>
+                <p>Today I'm taking you behind the curtain of how I was made! We'll pick the right frontier models, install the Agent Skill and Testing Kit, paint and assemble my 92 layers, laugh at all my embarrassing early fails from 0 to 100 A+, run Playwright visual QA, polish in Studio next to Test Signal, and go live in OBS!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 1 — Frontier Models, Kit &amp; /for-ai</span><span class="ts-pill">00:47 – 01:40</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">00:47</span>
+                <p>Step one: pick a frontier model that actually understands 2D spatial geometry! Seriously, don't cheap out here — we recommend only GPT-6.2 Sol or Astra, Opus 5.5 or Fable 5.2, and Gemini 4 Neon. Smaller models will accidentally put your eyebrows on your knees. Trust me, I've seen things.</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">01:11</span>
+                <p>Next, <code>curl SKILL.md</code> into <code>.agents/skills</code>, and grab the 197 KB Agent Testing Kit from <code>layer2d.com/docs</code> — plus our new <code>/for-ai</code> playbook! Inside are nine offline files, including <code>polish_audit.py</code>, <code>face3d.py</code>, and the standalone player. Every <code>.l2d</code> is just a clean ZIP with strict SHA-256 checksums — super tidy!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 2 — Prove the Loop with starter.l2d</span><span class="ts-pill">01:40 – 02:24</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">01:40</span>
+                <p>Step two: prove the whole pipeline in ten seconds flat! Run <code>starter_builder.py</code> to generate a working seven-layer <code>.l2d</code> purely in Python — he's a cute little minimalist buddy! — then run <code>l2d_tools.py validate</code> to verify every path, stat, and SHA-256 digest. Boom, instant green!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">02:02</span>
+                <p>And look how clean <code>pack.json</code> is for AI code generation! Layers draw back-to-front while yaw samples stay strictly parallel-indexed. Each keyform stores an affine matrix <code>A</code> and translation <code>t</code>, opacity, cylinder turn, and an optional inverse warp grid <code>D</code> evaluated directly on the GPU in WebGL2!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 3 — Painting Layered Art &amp; Building Nori (MIT)</span><span class="ts-pill">02:24 – 03:12</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">02:24</span>
+                <p>Step three — my favorite part — painting me! To generate concept art and transparent parts sheets, your agent can use Codex's built-in image generator, Grok, or export an OpenAI API key and call <code>gpt-image-2.6</code> with crisp transparent backgrounds at full 4K!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">02:45</span>
+                <p>Starting from one front concept sheet, the agent painted my canonical face, cardigan-off, and 30-degree turn refs, then generated six 4K transparent parts sheets — bare face, big emerald eyes, AEIOU talking mouths, calico hair, fluffy cat ears, cozy cardigan toggle, and my swishy tail! Automated cutting and layout wired everything into 17 yaw samples and 37 expressions!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 4 — Hard-Won Rigging Rules in SKILL.md</span><span class="ts-pill">03:12 – 04:02</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">03:12</span>
+                <p>Step four: our hard-won rigging rules inside <code>SKILL.md</code> — basically all the mistakes we made so you don't have to! Rule one: never alpha-crossfade hair! Ghostly see-through bangs are not a vibe! Keep opacity locked to <code>1.0</code> and stack solid physical depth shells — back hair, crown fill, under-bangs, side curtains, and front bangs!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">03:37</span>
+                <p>Rule two: never flip binary behind-face occlusion near center yaw, or under-bangs suddenly snap right over my eyebrows! Put crown fill behind cat ears with ear pitch groups so dark hair never eats my ear fluff, pad warped quads generously, and drive fluffy tails with rigid pelvis rotation in <code>pack.tail</code> — nice and swishy, zero weird noodle creases!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 5 — Real Failed Attempts &amp; Iterative Polish (Rounds 1–4)</span><span class="ts-pill">04:02 – 07:34</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">04:02</span>
+                <p><strong>Round 1 (0/100 F):</strong> Okay, step five: roast-me time! Real failed attempts! Nobody's first assembly comes out pretty, and my first build scored a glorious 0 out of 100 F in <code>polish_audit.py</code>! Look at me! My choker was wide enough to be a hula hoop, my bare elbow literally left the chat when my cardigan came off, my socks floated below my shins, and my Mary Janes had a giant invisible hole! Solving every limb from true opaque end-anchors, shrinking my choker to neck width, and mapping bare arms in <code>elbowHalf</code> snapped me right back together!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">04:40</span>
+                <p><strong>Round 2 (40/100 F):</strong> Round two looked totally fine from across the room — until we zoomed in and upgraded <code>polish_audit.py</code>! 40 out of 100! The hollow back rims of my socks and cardigan cuffs were drawn on top of my skin like flat stickers, my cardigan-off shoulder had a creepy V-notch, my neck had a flared stub, and dark sock outlines sliced right across my shoe arches! Splitting socks and sleeves with true partial masking — back rim behind the limb, front lip in front — seating opaque tangent shoulders, trimming the stub, and smoothly flaring my sock insteps squashed every single bug!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">05:19</span>
+                <p><strong>Round 3 (76/100 C → 100 A+ Structural):</strong> And just when I thought I was safe — round three caught three classic AI face traps at 76! First, a pink neck stem baked onto my face layer <code>F01</code> that swung sideways off my body whenever I turned! Second, four human ears — excuse me, I already have cat ears, why did I get backup human ears?! And third, my irises were looking at two completely different zip codes! Flood-filling <code>F01</code>'s dark cheek and chin outline erased the stem and extra ears cleanly, and shifting my irises inward finally locked my gaze straight ahead — hitting 100 A+ on structural checks!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">06:02</span>
+                <p><strong>Round 4A (Human Art-Direction — Eyes, Irises &amp; Garment Drape):</strong> Here's the real secret though: even at 100 A+ structurally, studio-grade polish takes a few rounds of human eye feedback! Looking closely at me, we widened my cat-eye shape, made my emerald irises 30 percent taller than wide so they pop, sculpted my lower lashes and ears, flattened my floating cardigan shoulders right onto my collarbone while trimming a tiny stray chest tab, and draped my camisole straps over my inner shoulders instead of choking my choker! So much cleaner!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">06:34</span>
+                <p><strong>Round 4B (3D Side-of-Head, Chin Dent &amp; Neck Fold → 92 Layers, 54 PASS):</strong> Then came my big 3D glow-up with <code>face3d.py</code>! We sculpted a sleek, strictly convex three-quarter anime jawline — goodbye weird little side-of-chin dent! — added rear-to-front cheek shading, a cute dedicated three-quarter nose, and lush multi-strand calico side hair! We also erased a sneaky baked chin fold off my neck layer <code>B01</code> so no weird crease shows up when I turn, and stabilized my body motion — bringing me to 92 layers and a genuine 100 A+ across all 54 checks!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">07:09</span>
+                <p><strong>Auto-Generated <code>--prompt</code> &amp; <code>/for-ai</code>:</strong> Best part? You don't have to guess how to explain any of this to your AI! Just run <code>polish_audit.py</code> with <code>--prompt</code>, and it prints a pixel-exact fix prompt you can paste right back! Plus, send your agent to <code>layer2d.com/for-ai</code> — it reminds them to check shoulders, elbows, wrists, and partial masking automatically, and to ask you to double-check before calling it done!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 6 — Autonomous Playwright WebGL2 QA Loop</span><span class="ts-pill">07:34 – 08:15</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">07:34</span>
+                <p>Step six closes the autonomous loop: Playwright WebGL2 visual QA! Running <code>qa_runner.py</code> boots the offline player in headless Chromium, checks my SHA-256 checksums, verifies zero console errors, and proves true zero-alpha transparency in OBS mode — zero ugly background halo!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">07:55</span>
+                <p>It snaps four diagnostic photo shoots for the agent's own eyes: wide yaw sweeps, a fine center sweep hunting for forehead pops, a 3×3 pitch grid checking my ear roots, and an expression sheet with blinks locked open — so nobody catches me mid-blink like a bad yearbook photo! Patch, re-run, and ship!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 7 — Client-Side Studio &amp; Test Signal Benchmark</span><span class="ts-pill">08:15 – 09:02</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">08:15</span>
+                <p>Step seven: hands-on polish in Layer2D Studio — running 100 percent client-side right in your browser with zero uploads! Drop my 92-layer <code>.l2d</code> — or any layered PSD — to sculpt warp grids, tweak spring chains, toggle my cream cardigan on and off, and test live mic lip-sync!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">08:36</span>
+                <p>And say hi to my cool studio buddy, Test Signal — our open MIT benchmark avatar built on the exact same format! 95 layers, 17 yaw samples, 41 expressions, and four pose-arm holds! Your agent can even unpack open repo models like us to study our physics and borrow utility layers, then export a fresh SHA-256-verified <code>.l2d</code> anytime!</p>
+              </div>
+            </div>
+
+            <div class="transcript-chapter">
+              <h3><span>Step 8 — Go Live in OBS (P2P OBS Link) &amp; Outro</span><span class="ts-pill">09:02 – 09:48</span></h3>
+              <div class="ts-seg">
+                <span class="ts-time">09:02</span>
+                <p>Finally, step eight — it's showtime in OBS! Drop your avatar onto <code>layer2d.com/player</code> in Chrome, flip on webcam tracking and mic lip-sync — hey, look at my mouth moving right now! — and click OBS Link to copy a private peer-to-peer URL!</p>
+              </div>
+              <div class="ts-seg">
+                <span class="ts-time">09:19</span>
+                <p>Paste that link into an OBS Browser Source and boom — your avatar transfers once peer-to-peer and mirrors 60 FPS tracking, expressions, and lip-sync over true transparent alpha! Zero green screen, zero cloud upload! Grab the Agent Testing Kit and our <code>/for-ai</code> guide at <code>layer2d.com/docs</code>, and go build your own adorable open 2D avatar today! See ya on stream!</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="wordmark" href="../"><img class="brand-mark" src="../assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
+      <nav class="footer-nav" aria-label="Footer">
+        <a href="../format.html">Format</a>
+        <a href="../studio/">Studio</a>
+        <a href="../player/?model=test-signal.l2d">Player</a>
+        <a href="../#avatars">Avatars</a>
+        <a href="../docs.html">Docs</a>
+        <a href="./">For AI</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll("[data-copy]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const el = document.getElementById(btn.getAttribute("data-copy"));
+        if (!el) return;
+        try {
+          await navigator.clipboard.writeText(el.textContent);
+          const prev = btn.textContent;
+          btn.textContent = "Copied!";
+          setTimeout(() => { btn.textContent = prev; }, 1600);
+        } catch (_) {}
+      });
+    });
+  </script>
+</body>
+</html>
