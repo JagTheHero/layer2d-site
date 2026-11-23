@@ -36,8 +36,10 @@ unzip -o layer2d-agent-kit.zip -d layer2d-kit && cd layer2d-kit
 Do **not** reinvent every layer, shader setup, expression piece, or rig trick from zero! Whenever you have access to other `.l2d` bundles, unpacked `models/*/viewer/` directories, `rigkit/` scripts, or `.psd` files in the workspace or repo (for example MIT-licensed models like `nori.l2d`, `test-signal.l2d`, `starter.l2d`, or any other model the user already has in their repo):
 
 ```bash
-python3 l2d_tools.py inspect path/to/reference.l2d
-python3 l2d_tools.py unpack  path/to/reference.l2d /tmp/ref_unpacked/
+# Download Nori (92-layer MIT reference) or inspect any .l2d model in your workspace
+curl -fsSL https://layer2d.com/player/nori.l2d -o nori.l2d
+python3 l2d_tools.py inspect nori.l2d
+python3 l2d_tools.py unpack  nori.l2d /tmp/ref_unpacked/
 ls /tmp/ref_unpacked/tex/
 ```
 
