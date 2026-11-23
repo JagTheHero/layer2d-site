@@ -43,6 +43,7 @@
           <a href="#build-l2d">Build a .l2d</a>
           <a href="#pack-schema">pack.json schema</a>
           <a href="#agent-guide">Agent tips</a>
+          <a href="#user-qa">User QA &amp; fix prompts</a>
           <a href="#studio">Studio</a>
           <a href="#player">Player</a>
           <a href="#obs">OBS</a>
@@ -53,12 +54,14 @@
           <section id="agent-kit">
             <h2>Agent skill &amp; downloadable testing kit</h2>
             <p>AI coding agents and developers can download the self-contained testing kit (offline WebGL2 Player, zero-dependency validator CLI, starter builder, Playwright visual QA runner, and <code>SKILL.md</code>) and build + test <code>.l2d</code> avatars without Studio or cloning the repo.</p>
+            <p><strong>Recommended frontier models:</strong> Multi-layer rigging and visual QA require high-precision spatial reasoning. We recommend <strong>only GPT-6.2 Sol / Astra, Claude Opus 5.5 / Fable 5.2, or Gemini 4 Neon</strong> — smaller or older models generally will not cut it.</p>
+            <p><strong>Generating layered character art:</strong> Use <strong>Codex</strong> (built-in image generation), <strong>Grok</strong> (Grok Imagine), or set <code>export OPENAI_API_KEY="sk-..."</code> and call <code>gpt-image-2.6</code> via OpenAI <code>/v1/images/edits</code> with <code>background="transparent"</code> and <code>size="3840x2160"</code> for clean 4K transparent PNG parts sheets.</p>
             <div class="actions" style="display:flex;gap:12px;flex-wrap:wrap;margin:0 0 18px;">
               <a class="btn btn-primary" href="downloads/layer2d-agent-kit.zip">Download Testing Kit (.zip)</a>
               <a class="btn btn-ghost" href="skills/layer2d-avatar-builder/SKILL.md">Agent SKILL.md</a>
               <a class="btn btn-ghost" href="agent-guide.md">Raw Markdown Guide</a>
             </div>
-            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Download and unpack the offline agent testing kit</span><span class="ln">curl -fsSL https://layer2d.com/downloads/layer2d-agent-kit.zip -o layer2d-agent-kit.zip</span><span class="ln">unzip -o layer2d-agent-kit.zip -d layer2d-kit &amp;&amp; cd layer2d-kit</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 1. Build a valid .l2d bundle from scratch</span><span class="ln">python3 starter_builder.py starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 2. Validate archive paths, manifest stats, textures &amp; SHA-256 digests</span><span class="ln">python3 l2d_tools.py validate starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 3. Run offline WebGL2 Playwright QA (OBS alpha + wide/center turn sweeps + pitch + expressions)</span><span class="ln">python3 qa_runner.py starter.l2d --out qa_out/</span></code></pre>
+            <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Download and unpack the offline agent testing kit</span><span class="ln">curl -fsSL https://layer2d.com/downloads/layer2d-agent-kit.zip -o layer2d-agent-kit.zip</span><span class="ln">unzip -o layer2d-agent-kit.zip -d layer2d-kit &amp;&amp; cd layer2d-kit</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 1. Build a valid .l2d bundle from scratch</span><span class="ln">python3 starter_builder.py starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 2. Validate archive paths, manifest stats, textures &amp; SHA-256 digests</span><span class="ln">python3 l2d_tools.py validate starter.l2d</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 3. Audit partial masking, bare shoulders, neck-to-head, shoe arch fill &amp; limb alignment (+ copy-paste fix prompt!)</span><span class="ln">python3 polish_audit.py starter.l2d --out polish_out/ --prompt</span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> 4. Run offline WebGL2 Playwright QA (OBS alpha + wide/center turn sweeps + pitch + expressions)</span><span class="ln">python3 qa_runner.py starter.l2d --out qa_out/</span></code></pre>
             <p>Install the skill directly into an agent workspace at <code>.agents/skills/layer2d-avatar-builder/SKILL.md</code> using <code>curl -fsSL https://layer2d.com/skills/layer2d-avatar-builder/SKILL.md</code>.</p>
           </section>
 
@@ -91,7 +94,7 @@
                   <tr><td><code>chains[]</code></td><td>Multi-joint spring chains: <code>name</code>, <code>parent</code> (<code>"head" | "body" | "hips" | "armR" | "armL"</code>), <code>k: [root, tip]</code>, <code>damp</code>, <code>joints: [x0,y0, x1,y1, …]</code> (2–6 joints), <code>depth</code>, <code>pin</code>.</td></tr>
                   <tr><td><code>tail</code></td><td>Optional rigid pelvis-locked tail: <code>{id, pivot: [x,y], amp, freq, happyFaces}</code>.</td></tr>
                   <tr><td><code>outfits</code></td><td>Named toggles: <code>{label, default, hide: [ids], off: [dx,dy], secs}</code>.</td></tr>
-                  <tr><td><code>expr</code></td><td><code>pieces</code> (static overlays or flipbook <code>atlas: {cols, rows, fps, intro, loop, pad}</code>), <code>faces</code> (<code>hide</code>, <code>add</code>, <code>move</code>, <code>eyes</code>, <code>look</code>), <code>holds</code> (<code>hide</code>, <code>add</code>, <code>still</code>, <code>face</code>), and <code>vowels: {A, I, U, E, O}</code>.</td></tr>
+                  <tr><td><code>expr</code></td><td><code>pieces</code> (static overlays or flipbook <code>atlas: {cols, rows, fps, intro, loop, pad}</code>), <code>faces</code> (<code>hide</code>, <code>add</code>, <code>move</code>, <code>eyes</code>, <code>look</code>), <code>holds</code> (<code>hide</code>, <code>add</code>, <code>still</code>, <code>face</code>), <code>blink</code> (<code>{hide, add, drop, squash}</code>), and <code>vowels: {A, I, U, E, O}</code>.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -108,9 +111,33 @@
               <li><strong>Rigid tail rotation beats spring chains on fluffy tails.</strong> Multi-segment Voronoi chains bend thick animal tails like wavy fabric with segment creases. Use <code>pack.tail</code> with pure rigid rotation around the pelvis pivot (no per-frame non-uniform <code>sx/sy</code> stretch).</li>
               <li><strong>Topological clipping masks.</strong> Set <code>clipTarget: true</code> on every layer referenced by another layer's <code>clip</code> or <code>behind</code> (for example <code>F01</code> and sclera <code>E01R/L</code>). The runtime topologically sorts parent masks before child masks automatically.</li>
               <li><strong>Pose-arm holds &amp; expressions.</strong> Place forehead gloom/mood shades high above the browline. In <code>holds</code>, hide every replaced resting arm/sleeve layer and lock its spring with <code>still: ["armR"]</code>. Force <code>eyes = 1.0</code> when capturing expression QA tiles so random blinks never ruin a sheet.</li>
+              <li><strong>Use true 3D partial masking on socks, sleeve cuffs &amp; tubular bands.</strong> Never draw an uncut hollow back-rim ellipse on top of an entering limb or neck. Split socks (<code>S01R/L</code>), sleeve cuffs (<code>J05R/L</code>, <code>C04R/L</code>), and bands along their curved front-lip parabola into <code>&lt;ID&gt;_back</code> behind the limb and <code>&lt;ID&gt;</code> (front lip only) in front, and include <code>&lt;ID&gt;_back</code> in <code>outfits</code> and <code>body.elbowHalf</code>.</li>
+              <li><strong>Seal bare shoulders (jacket OFF), smooth neck-to-head transitions &amp; fill open-arch shoes wall-to-wall.</strong> Keep bare shoulder ridges/armpits 100% opaque (<code>alpha = 255</code>) and tangent to the torso collarbone slope (<code>0 px</code> V-notch); trim any flared jaw stub off neck <code>B01</code> so it enters <code>F01</code> smoothly; and smoothly flare lower sock insteps (<code>map_coordinates</code>) so shaded sock fabric fills open-arch shoes (Mary Janes) wall-to-wall with zero gaps or internal sock outlines.</li>
+              <li><strong>Keep face layer <code>F01</code> stem-free, ear-free &amp; eyes focused straight ahead.</strong> Never leave a hanging neck stem below <code>F01</code>'s chin outline (it swings off body neck <code>B01</code> on head turns!) or baked-on side ears on <code>F01</code> (which create double human ears alongside <code>F05/F06</code>). Keep irises &amp; pupils (<code>E02/E03</code>) centered or slightly inward inside sclera <code>E01</code> (zero outward wall-eyed divergence) with consistent key-light highlights.</li>
+              <li><strong>Audit attachment polish &amp; auto-generate fix prompts across every outfit toggle.</strong> Run <code>python3 polish_audit.py avatar.l2d --out polish_out/ --prompt</code> (bundled in the Agent Testing Kit, or <code>python3 -m rigkit.polish</code>) across both default and outer-garment-OFF states. It scores attachment quality <code>0–100</code>, renders zoomed close-ups (<code>polish_audit.png</code>), and generates a pixel-exact <code>polish_fix_prompt.txt</code> so even less experienced agents can fix every defect until <code>FAIL=0</code> and <code>score &gt;= 92</code>.</li>
               <li><strong>Run a visual Playwright QA loop before shipping.</strong> Render headless WebGL2 turn sweeps across both wide angles (<code>-1.0 .. +1.0</code>) and fine center angles (<code>-0.40 .. +0.40</code>), plus pitch grids, expression sheets, and <code>?obs=1</code> top-corner alpha checks (<code>alpha === 0</code>), and inspect the rendered images directly.</li>
             </ul>
             <p>Full standalone agent specification &amp; starter builder script: <a href="agent-guide.md"><code>https://layer2d.com/agent-guide.md</code></a>.</p>
+          </section>
+
+          <section id="user-qa">
+            <h2>User QA checklist &amp; how to tell your AI to fix defects</h2>
+            <p>Even with frontier models, your first pass will often have subtle attachment bugs. First run <code>python3 polish_audit.py avatar.l2d --out polish_out/ --prompt</code> and paste <code>polish_fix_prompt.txt</code> back to your AI — then check these 6 high-impact visual details in Studio or Player:</p>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>What to inspect</th><th>What to tell your AI agent</th></tr></thead>
+                <tbody>
+                  <tr><td><strong>Hollow sock / sleeve / band back rims over skin</strong></td><td><em>"Apply partial masking to socks (<code>S01R/L</code>) and sleeve cuffs (<code>J05R/L</code>): split each along its front-lip parabola into <code>&lt;ID&gt;_back</code> behind the limb and <code>&lt;ID&gt;</code> (front lip only) in front, and add <code>&lt;ID&gt;_back</code> to <code>outfits</code> and <code>body.elbowHalf</code>."</em></td></tr>
+                  <tr><td><strong>Shoulder gap / V-notch with jacket toggled OFF</strong></td><td><em>"Toggle the cardigan/jacket OFF with hair hidden. Keep the top shoulder ridge &amp; armpit 100% opaque (<code>alpha=255</code>), seat <code>B03R/L</code> tangent to <code>B02</code>'s collarbone slope for 0px V-notch, and map bare arms in <code>body.elbowHalf</code>."</em></td></tr>
+                  <tr><td><strong>Stair-step or gap between neck &amp; head</strong></td><td><em>"Trim the flared upper jaw stub off neck <code>B01</code> down to slender mid-neck width so it rises smoothly behind <code>F01</code>'s chin with zero step, and fade only the bottom collarbone edge into <code>B02</code>."</em></td></tr>
+                  <tr><td><strong>Socks not filling open-arch shoes wall-to-wall</strong></td><td><em>"Composite shoes <code>S02R/L</code> on bright green. Smoothly flare lower sock insteps (<code>y &gt;= 0.66h</code>) with <code>map_coordinates</code> (not binary dilation) so shaded sock fabric fills the shoe arch wall-to-wall with zero gaps or internal sock outline."</em></td></tr>
+                  <tr><td><strong>Face neck stem or double human ears (<code>F01</code> + <code>F05/F06</code>)</strong></td><td><em>"Inspect <code>F01</code> alone on green. Strip any hanging neck stem below the chin outline (so nothing swings off <code>B01</code> on head turns) and erase baked-on side ears from <code>F01</code> so ONLY separate <code>F05/F06</code> ears remain."</em></td></tr>
+                  <tr><td><strong>Unfocused / wall-eyed gaze looking sideways</strong></td><td><em>"Run <code>polish_audit.py --prompt</code> to check <code>eye_gaze_focus</code>. Shift irises &amp; pupils (<code>E02/E03</code>) inward toward the nose bridge for zero outward divergence, and align <code>E04</code> highlights to one consistent key light."</em></td></tr>
+                  <tr><td><strong>Oversized choker / belt / misaligned limbs</strong></td><td><em>"Resize choker <code>A03</code> to <code>1.00–1.10×</code> neck width, tuck halter straps behind the choker, seat belt <code>K01</code> flush on <code>K02</code>, and anchor-solve all limb joints within <code>&lt; 2px</code>."</em></td></tr>
+                  <tr><td><strong>Hair pops over brows or ear drift on turns</strong></td><td><em>"Run <code>qa_runner.py</code> and inspect <code>qa_turns_center.png</code> &amp; <code>qa_pitch_grid.png</code>. Lock hair <code>op=1.0</code>, lock depth shells to <code>behind=1.0</code> across all yaw angles, put crown fill behind animal ears, and pad quads <code>&gt;= 320px</code>."</em></td></tr>
+                </tbody>
+              </table>
+            </div>
           </section>
 
           <section id="studio">
@@ -124,7 +151,7 @@
             <ul>
               <li>Drag an <code>.l2d</code> file onto the page to load it.</li>
               <li>Webcam tracking drives head turn, gaze and blinks.</li>
-              <li>Microphone input drives lip sync from vowel shapes.</li>
+              <li>Microphone input drives lip sync with selectable <strong>Phoneme</strong> (LPC formant + consonant/plosive detector), <strong>Basic</strong> (3-band AEIOU), or <strong>Volume</strong> modes.</li>
               <li>Expressions, outfits and holds are selected from the panel.</li>
             </ul>
             <h3>Keyboard</h3>
@@ -147,7 +174,8 @@
             <p>Add a <strong>Browser</strong> source in OBS and point it at the player with <code>?obs=1</code>. OBS mode renders on a transparent background with premultiplied alpha (no green screen needed) and hides the interface.</p>
             <pre class="code"><code><span class="ln"><span class="tok-p">#</span> Recommended (zero self-hosting, no OBS flags, works with private local .l2d files):</span><span class="ln"><span class="tok-p">#</span> 1. Open https://layer2d.com/player/ in Chrome/Edge, drop your .l2d, enable Mic &amp; Cam</span><span class="ln"><span class="tok-p">#</span> 2. Click "OBS Link" — paste the copied URL into an OBS Browser Source:</span><span class="ln"><span class="tok-s">https://layer2d.com/player/?obs=1&amp;link=l2d-xxxxxxxxxxxx</span></span><span class="ln"></span><span class="ln"><span class="tok-p">#</span> Or point directly at a hosted .l2d URL:</span><span class="ln"><span class="tok-s">https://layer2d.com/player/?model=test-signal.l2d&amp;obs=1</span></span></code></pre>
             <ul>
-              <li><strong>OBS Link (P2P):</strong> Because OBS's embedded Browser Source blocks webcam/mic permissions and OS file drag-and-drop by default, clicking <strong>OBS Link</strong> in your regular browser streams your <code>.l2d</code> once directly peer-to-peer (cached locally in OBS's IndexedDB, never uploaded to any server) and mirrors live webcam tracking, mic lip-sync, expressions, outfits, and poses into OBS at 60 fps with true transparent alpha.</li>
+              <li><strong>OBS Link (P2P) + Synced OBS Audio Tunnel:</strong> Because OBS's embedded Browser Source blocks webcam/mic permissions and OS file drag-and-drop by default, clicking <strong>OBS Link</strong> in your regular browser streams your <code>.l2d</code> once directly peer-to-peer (cached locally in OBS's IndexedDB, never uploaded to any server) and mirrors live webcam tracking, expressions, outfits, and poses into OBS at 60 fps with true transparent alpha.</li>
+              <li><strong>Keep voice &amp; mouth frame-synchronized in OBS:</strong> With <strong>OBS Audio: ON</strong> (the default when OBS Link + Mic are active), your mic audio is tunneled over WebRTC into the OBS Browser Source. Enable <strong>Control audio via OBS</strong> on the Browser Source and mute your separate raw OBS mic input (to avoid duplicate audio). Inside OBS, phoneme detection analyzes the incoming stream ahead of a configurable Web Audio <code>DelayNode</code> (the <strong>Sync</strong> slider, default <code>90ms</code>) so the delayed voice output and avatar mouth emerge from the exact same OBS source in lockstep — with zero local headphone echo in your browser tab.</li>
               <li>Set width and height to match your canvas, for example <code>1080 × 1920</code>.</li>
               <li>Prefer Window Capture instead? Click <strong>BG: Green</strong> in the browser player for a pure <code>#00ff00</code> chroma-key backdrop.</li>
             </ul>
@@ -166,6 +194,9 @@
                   <tr><td><code>obs=1</code></td><td>Transparent background, interface hidden.</td></tr>
                   <tr><td><code>bg=light|dark|green|transparent</code></td><td>Set initial backdrop color (<code>transparent</code> enables OBS mode).</td></tr>
                   <tr><td><code>mic=1</code></td><td>Start microphone lip sync on load.</td></tr>
+                  <tr><td><code>lip=phoneme|basic|volume</code></td><td>Select lip-sync engine (default: <code>phoneme</code>).</td></tr>
+                  <tr><td><code>obsaudio=0|1</code></td><td>Enable or disable WebRTC mic audio tunneling through the OBS Browser Source (default: <code>1</code>).</td></tr>
+                  <tr><td><code>audiodelay=&lt;ms&gt;</code></td><td>Set OBS Browser Source audio sync delay in milliseconds (<code>0</code>–<code>300</code>, default: <code>90</code>).</td></tr>
                   <tr><td><code>cam=1</code></td><td>Start webcam tracking on load.</td></tr>
                   <tr><td><code>auto=0</code></td><td>Disable idle animation.</td></tr>
                   <tr><td><code>face=&lt;name&gt;</code></td><td>Start on a named expression, for example <code>face=Happy</code>.</td></tr>

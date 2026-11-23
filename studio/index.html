@@ -71,6 +71,12 @@
             <button data-act="next-key" type="button">Next Yaw Keyform <kbd>E</kbd></button>
             <button data-act="center-key" type="button">Center Keyform (0°) <kbd>0</kbd></button>
             <hr />
+            <button data-act="add-yaw-key" type="button">Add Angle X Keyform</button>
+            <button data-act="del-yaw-key" type="button">Delete Active Angle X Keyform</button>
+            <button data-act="add-pitch-key" type="button">Add Angle Y Keyform</button>
+            <button data-act="del-pitch-key" type="button">Delete Active Angle Y Keyform</button>
+            <button data-act="new-blend-shape" type="button">New Blend Shape…</button>
+            <hr />
             <button data-act="mirror-lr" type="button">Mirror Keyform Left ↔ Right</button>
             <button data-act="interp-key" type="button">Interpolate Keyform from Neighbors</button>
             <button data-act="copy-key-all" type="button">Copy Layer Transform to All Angles</button>
@@ -237,6 +243,9 @@
           <button class="vp-btn" id="vp-onion" type="button">Onion Skin</button>
           <span class="vp-sep"></span>
           <span class="vp-readout mono" id="vp-yaw">Yaw 0.0°</span>
+          <span class="vp-readout mono" id="vp-pitch">Pitch 0.0°</span>
+          <span class="vp-sep"></span>
+          <button class="vp-target-pill mono yaw" id="vp-target" title="Active sculpting target (click to return to Angle X)" type="button">Angle X +0.0°</button>
         </div>
         <div class="vp-group">
           <button class="vp-btn" id="vp-physics" title="Toggle Live Spring Physics" type="button">Physics</button>
@@ -285,7 +294,8 @@
         <div class="tl-title-group">
           <span class="panel-title">TIMELINE</span>
           <select id="tl-clip-select" class="field-select compact"></select>
-          <button class="btn-xs" id="tl-add-key" title="Insert Keyframe at Playhead" type="button">+ Keyframe</button>
+          <button class="btn-xs" id="tl-add-key" title="Insert Keyframe at Playhead (or double-click lane)" type="button">+ Key</button>
+          <button class="btn-xs" id="tl-del-key" title="Delete Selected Keyframe (Del / Backspace / Right-click)" type="button" disabled>− Key</button>
           <button class="btn-xs" id="tl-new-clip" title="New Animation Clip" type="button">+ Clip</button>
         </div>
         <div class="tl-transport">

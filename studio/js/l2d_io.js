@@ -274,6 +274,8 @@ export function computeManifest(pack, prevManifest = {}) {
     layers: (pack.layers || []).length,
     chains: (pack.chains || []).length,
     samples: (pack.samples || []).length,
+    pitchSamples: (pack.pitchSamples || []).length,
+    blendShapes: (pack.blendShapes || []).length,
     expressions: Object.keys(expr.faces || {}).length,
     holds: Object.keys(expr.holds || {}).length,
     outfits: Object.keys(pack.outfits || {}).length,
@@ -283,6 +285,8 @@ export function computeManifest(pack, prevManifest = {}) {
   const capabilities = {
     headYawSamples: stats.samples,
     headPitch2D: true,
+    headPitchKeyforms: stats.pitchSamples > 0,
+    blendShapeDeform: stats.blendShapes > 0,
     springChains: stats.chains > 0,
     tailRig: Boolean(pack.tail && pack.tail.id),
     obsAlpha: true,

@@ -10,7 +10,16 @@
  */
 
 import { VS, FS } from "./shaders.js";
-import { inv2, sampleD, gridSizeOf } from "./warp_math.js";
+import {
+  inv2,
+  sampleD,
+  gridSizeOf,
+  lerpGrids,
+  addScaledGrid,
+  applyLayerDelta,
+  invertForwardGridJS,
+  isGridNonZero,
+} from "./warp_math.js";
 
 const DEFAULT_VOWELS = { A: "M04", I: "M05", U: "M06", E: "M07", O: "M08" };
 const LID = [0.4, 0.15];
@@ -67,6 +76,8 @@ export class Layer2DEngine {
     this.lockRows = null;
     this.chainTex = null;
     this.chainRows = null;
+    this.fBase = 1;
+    this.fUploadBuf = new Float32Array(16 * 16 * 4);
     this.CH = [];
     this.HL_IDS = new Set();
     this.chainIds = new Int32Array(8);
@@ -302,10 +313,12 @@ export class Layer2DEngine {
         pitchGroup: pg,
       });
     });
-    this.chainRows = new Float32Array(28 * Math.max(1, this.CH.length));
+    this.fBase = Math.max(1, this.CH.length);
+    const totalChainTexRows = this.fBase + 16;
+    this.chainRows = new Float32Array(16 * 4 * this.fBase);
     if (!this.chainTex) this.chainTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.chainTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 7, Math.max(1, this.CH.length), 0, gl.RGBA, gl.FLOAT, this.chainRows);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 16, totalChainTexRows, 0, gl.RGBA, gl.FLOAT, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
@@ -442,6 +455,11 @@ export class Layer2DEngine {
     return [-32 * pitch, 1 - 0.045 * ap];
   }
 
+  _pitchParamsForLayer(L, pitch) {
+    if (!L || !pitch || L.pitchManual) return [0, 1];
+    return this._pitchParams(this._pitchGroup(L.id), pitch);
+  }
+
   _pitchFwd(p, pitch, group) {
     if (!pitch) return p;
     const H = this.P.head, [dy, sy] = this._pitchParams(group, pitch);
@@ -476,21 +494,21 @@ export class Layer2DEngine {
     };
   }
 
-  syncFrameState(params, exactIdx = null) {
+  syncFrameState(params, exactIdx = null, exactPitchIdx = null) {
     if (!this.P) return null;
     const m = this._buildMotionState(params);
-    const key = this.keyAt(m.a, exactIdx);
     const fc = this._evalFace(params);
-    this.lastFrame = { m, key, fc, exactIdx };
+    const key = this._composeKey(m, params, exactIdx, exactPitchIdx, fc);
+    this.lastFrame = { m, key, fc, exactIdx, exactPitchIdx };
     return this.lastFrame;
   }
 
-  getLiveSampleLayer(layerIdx, params = null, exactIdx = null) {
+  getLiveSampleLayer(layerIdx, params = null, exactIdx = null, exactPitchIdx = null) {
     if (!this.P || layerIdx < 0 || layerIdx >= this.P.layers.length) return null;
-    const fr = params ? this.syncFrameState(params, exactIdx) : this.lastFrame;
+    const fr = params ? this.syncFrameState(params, exactIdx, exactPitchIdx) : this.lastFrame;
     if (!fr || !fr.key || !fr.key.layers[layerIdx]) {
       const m = params ? this._buildMotionState(params) : { a: 0, pitch: 0, roll: 0, sway: 0, lean: 0, breath: 1, body: 0, bounce: 0, tailWag: 1, tailPhaseOffset: 0 };
-      const key = this.keyAt(m.a, exactIdx);
+      const key = this._composeKey(m, params || {}, exactIdx, exactPitchIdx, null);
       return key.layers[layerIdx] || null;
     }
     return this._effectiveLayerPose(layerIdx, fr.key, fr.m, fr.fc).sl;
@@ -708,7 +726,7 @@ export class Layer2DEngine {
     }
 
     if (kind === 0 && L.head) {
-      const [pDy, pSy] = this._pitchParams(this._pitchGroup(L.id), m.pitch || 0);
+      const [pDy, pSy] = this._pitchParamsForLayer(L, m.pitch || 0);
       if (pDy !== 0 || pSy !== 1) {
         const dx = p[0] - H0.centre[0], dy = p[1] - H0.centre[1];
         const pu = dx * H0.eu[0] + dy * H0.eu[1];
@@ -751,7 +769,7 @@ export class Layer2DEngine {
     // 2. Forward head cylinder turn + pitch
     if (kind === 0 && L.head) {
       p = this._cylFwd(p, L, k, fr.key);
-      const [pDy, pSy] = this._pitchParams(this._pitchGroup(L.id), m.pitch || 0);
+      const [pDy, pSy] = this._pitchParamsForLayer(L, m.pitch || 0);
       if (pDy !== 0 || pSy !== 1) {
         const dx = p[0] - H0.centre[0], dy = p[1] - H0.centre[1];
         const pu = dx * H0.eu[0] + dy * H0.eu[1];
@@ -835,7 +853,19 @@ export class Layer2DEngine {
   keyAt(a, exactIdx = null) {
     const S = this.P.samples;
     if (!S || !S.length) return { angle: 0, jaw: 0, chin: 0, chinAt: this.P.head.centre, layers: [] };
-    if (exactIdx !== null && exactIdx >= 0 && exactIdx < S.length) return S[exactIdx];
+    if (exactIdx !== null && exactIdx >= 0 && exactIdx < S.length) {
+      const s = S[exactIdx];
+      return {
+        ...s,
+        layers: s.layers.map((p) => ({
+          ...p,
+          A: p.A ? p.A.slice() : [1, 0, 0, 1],
+          t: p.t ? [p.t[0], p.t[1]] : [0, 0],
+          D: p.D ? p.D.slice() : null,
+          F: p.F ? p.F.slice() : null,
+        })),
+      };
+    }
     const turn = this.P.head.turn;
     const ang = a < 0 ? -a * turn.R : a * turn.L;
     let i = 0;
@@ -858,12 +888,108 @@ export class Layer2DEngine {
           hole: lerp(p.hole || 0, q.hole || 0, f),
           wipe: lerp(p.wipe ?? 1, q.wipe ?? 1, f),
           cut: lerp(p.cut || 0, q.cut || 0, f),
-          D: p.D && q.D && p.D.length === q.D.length ? lerpArr(p.D, q.D, f) : (p.D || q.D || null),
+          D: lerpGrids(p.D, q.D, f),
+          F: lerpGrids(p.F, q.F, f),
         };
         if (p.slide && q.slide) out.slide = lerpArr(p.slide, q.slide, f);
         return out;
       }),
     };
+  }
+
+  /**
+   * Interpolate Angle Y (`pack.pitchSamples`) per-layer deltas at pitch in [-1, 1].
+   */
+  pitchAt(pitch, exactPitchIdx = null) {
+    const PS = this.P && this.P.pitchSamples;
+    if (!PS || !PS.length) return null;
+    if (exactPitchIdx !== null && exactPitchIdx >= 0 && exactPitchIdx < PS.length) {
+      return PS[exactPitchIdx].layers || null;
+    }
+    const pVal = clamp(pitch || 0, -1, 1);
+    if (PS.length === 1) return PS[0].layers || null;
+    let i = 0;
+    while (i + 1 < PS.length && PS[i + 1].pitch < pVal) i++;
+    const s0 = PS[i], s1 = PS[Math.min(i + 1, PS.length - 1)];
+    if (s0 === s1 || s1.pitch === s0.pitch) return s0.layers || null;
+    const f = clamp((pVal - s0.pitch) / (s1.pitch - s0.pitch), 0, 1);
+    const L0 = s0.layers || {}, L1 = s1.layers || {};
+    const ids = new Set([...Object.keys(L0), ...Object.keys(L1)]);
+    if (!ids.size) return null;
+    const out = Object.create(null);
+    for (const id of ids) {
+      const a = L0[id] || {}, b = L1[id] || {};
+      const dt0 = a.dt || [0, 0], dt1 = b.dt || [0, 0];
+      const ds0 = a.dScale || [0, 0], ds1 = b.dScale || [0, 0];
+      const F = lerpGrids(a.F, b.F, f);
+      out[id] = {
+        dt: [lerp(dt0[0] || 0, dt1[0] || 0, f), lerp(dt0[1] || 0, dt1[1] || 0, f)],
+        dRot: lerp(a.dRot || 0, b.dRot || 0, f),
+        dScale: [lerp(ds0[0] || 0, ds1[0] || 0, f), lerp(ds0[1] || 0, ds1[1] || 0, f)],
+        dOp: lerp(a.dOp || 0, b.dOp || 0, f),
+        F,
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Resolve active weight for every Blend Shape in `pack.blendShapes` (manual slider + expression + optional binding).
+   */
+  resolveBlendWeights(params, fc = null) {
+    const BS = this.P && this.P.blendShapes;
+    if (!BS || !BS.length) return null;
+    const weights = Object.create(null);
+    let any = false;
+    const pBlend = (params && params.blend) || {};
+    const fBlend = (fc && fc.blend) || {};
+    for (const bs of BS) {
+      const lo = bs.min ?? 0, hi = bs.max ?? 1;
+      let w = bs.id in pBlend ? pBlend[bs.id] : (bs.default ?? 0);
+      if (bs.id in fBlend) w += fBlend[bs.id];
+      if (bs.bind === "mouthOpen") w += params?.vowel ? 1 : 0;
+      else if (bs.bind === "eyeOpen") w += clamp(1 - (params?.eyes ?? 1), 0, 1);
+      else if (bs.bind === "breath") w += params?.breath || 0;
+      else if (bs.bind === "angleX") w += params?.a || 0;
+      else if (bs.bind === "angleY") w += params?.pitch || 0;
+      else if (bs.bind === "angleZ") w += clamp((params?.roll || 0) / 0.35, -1, 1);
+      w = clamp(w, lo, hi);
+      if (Math.abs(w) > 1e-5) {
+        weights[bs.id] = w;
+        any = true;
+      }
+    }
+    return any ? weights : null;
+  }
+
+  /**
+   * Compose full per-layer pose: Angle X keyform + Angle Y keyform delta + active Blend Shapes.
+   */
+  _composeKey(m, params, exactIdx = null, exactPitchIdx = null, fc = null) {
+    const key = this.keyAt(m.a, exactIdx);
+    const P = this.P;
+    const pitchDeltas = this.pitchAt(m.pitch, exactPitchIdx);
+    const blendWeights = this.resolveBlendWeights(params, fc);
+    if (!pitchDeltas && !blendWeights) return key;
+
+    const BS = P.blendShapes || [];
+    for (let i = 0; i < P.layers.length; i++) {
+      const id = P.layers[i].id;
+      let cur = key.layers[i];
+      if (!cur) continue;
+      if (pitchDeltas && pitchDeltas[id]) {
+        cur = applyLayerDelta(cur, pitchDeltas[id], 1.0);
+      }
+      if (blendWeights) {
+        for (const bs of BS) {
+          const w = blendWeights[bs.id];
+          if (!w || !bs.layers || !bs.layers[id]) continue;
+          cur = applyLayerDelta(cur, bs.layers[id], w);
+        }
+      }
+      key.layers[i] = cur;
+    }
+    return key;
   }
 
   _stepChains(m, dt) {
@@ -1028,6 +1154,7 @@ export class Layer2DEngine {
       hide,
       after,
       move,
+      blend: F.blend || null,
       eyes: eyeArr,
       gaze: F.look || [params.gazeX || 0, params.gazeY || 0],
       over: (Hd && Hd.over) || {},
@@ -1097,26 +1224,38 @@ export class Layer2DEngine {
     gl.clearColor(clearCol[0], clearCol[1], clearCol[2], clearCol[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    // Optional onion skinning of adjacent yaw keyforms (drawn softly behind active pass)
-    if (opts.onionSkin && opts.snapSampleIdx !== null && opts.snapSampleIdx !== undefined) {
-      const si = opts.snapSampleIdx;
-      const ghosts = [];
-      if (si > 0) ghosts.push({ idx: si - 1, op: 0.22 });
-      if (si + 1 < P.samples.length) ghosts.push({ idx: si + 1, op: 0.22 });
-      for (const gh of ghosts) {
-        this._drawPass(m, params, vw, sc, W, H, gh.idx, opts.hiddenIds, opts.soloId, gh.op, targetFb);
+    // Optional onion skinning of adjacent Angle X or Angle Y keyforms (drawn softly behind active pass)
+    if (opts.onionSkin) {
+      if (opts.snapPitchIdx !== null && opts.snapPitchIdx !== undefined && P.pitchSamples && P.pitchSamples.length > 1) {
+        const pi = opts.snapPitchIdx;
+        const ghosts = [];
+        if (pi > 0) ghosts.push({ pIdx: pi - 1, op: 0.22 });
+        if (pi + 1 < P.pitchSamples.length) ghosts.push({ pIdx: pi + 1, op: 0.22 });
+        for (const gh of ghosts) {
+          const gm = { ...m, pitch: P.pitchSamples[gh.pIdx].pitch };
+          this._drawPass(gm, params, vw, sc, W, H, opts.snapSampleIdx ?? null, gh.pIdx, opts.hiddenIds, opts.soloId, gh.op, targetFb);
+        }
+      } else if (opts.snapSampleIdx !== null && opts.snapSampleIdx !== undefined) {
+        const si = opts.snapSampleIdx;
+        const ghosts = [];
+        if (si > 0) ghosts.push({ idx: si - 1, op: 0.22 });
+        if (si + 1 < P.samples.length) ghosts.push({ idx: si + 1, op: 0.22 });
+        for (const gh of ghosts) {
+          this._drawPass(m, params, vw, sc, W, H, gh.idx, opts.snapPitchIdx ?? null, opts.hiddenIds, opts.soloId, gh.op, targetFb);
+        }
       }
     }
 
-    this._drawPass(m, params, vw, sc, W, H, opts.snapSampleIdx ?? null, opts.hiddenIds, opts.soloId, 1.0, targetFb);
+    this._drawPass(m, params, vw, sc, W, H, opts.snapSampleIdx ?? null, opts.snapPitchIdx ?? null, opts.hiddenIds, opts.soloId, 1.0, targetFb);
   }
 
-  _drawPass(m, params, vw, sc, W, H, exactIdx, hiddenIds, soloId, passOp, targetFb = null) {
+  _drawPass(m, params, vw, sc, W, H, exactIdx, exactPitchIdx, hiddenIds, soloId, passOp, targetFb = null) {
     const gl = this.gl;
     const P = this.P;
     const U = this.U;
     const MM = P.motion;
-    const key = this.keyAt(m.a, exactIdx);
+    const fc = this._evalFace(params);
+    const key = this._composeKey(m, params, exactIdx, exactPitchIdx, fc);
     const mg = 140;
 
     gl.uniform4f(U.uView, ...vw);
@@ -1150,7 +1289,7 @@ export class Layer2DEngine {
 
     if (this.CH.length) {
       this.CH.forEach((c, i) => {
-        const row = this.chainRows.subarray(28 * i, 28 * i + 28);
+        const row = this.chainRows.subarray(64 * i, 64 * i + 28);
         row.fill(0);
         row.set(c.J.slice(0, 12), 0);
         row.set(c.d.slice(0, 12), 12);
@@ -1159,15 +1298,17 @@ export class Layer2DEngine {
       });
       gl.activeTexture(gl.TEXTURE10);
       gl.bindTexture(gl.TEXTURE_2D, this.chainTex);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 7, this.CH.length, gl.RGBA, gl.FLOAT, this.chainRows);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 16, this.CH.length, gl.RGBA, gl.FLOAT, this.chainRows);
+    } else {
+      gl.activeTexture(gl.TEXTURE10);
+      gl.bindTexture(gl.TEXTURE_2D, this.chainTex);
     }
     gl.uniform1i(U.uChains, 10);
     gl.uniform1i(U.uSheerTex, 9);
     gl.uniform1f(U.uTime, this.simT);
 
-    const fc = this._evalFace(params);
     if (!targetFb && passOp >= 0.99) {
-      this.lastFrame = { m, key, fc, exactIdx };
+      this.lastFrame = { m, key, fc, exactIdx, exactPitchIdx };
     }
     const eyes = this._eyeState(fc.eyes, fc.gaze);
     const after = { ...fc.after };
@@ -1237,6 +1378,9 @@ export class Layer2DEngine {
 
       let spread = 1;
       if (k.D) { let mx = 0; for (const v of k.D) mx = Math.max(mx, Math.abs(v)); spread += mx; }
+      const hasF = isGridNonZero(k.F);
+      const gf = hasF ? gridSizeOf(k.F) : 0;
+      if (hasF) { let mx = 0; for (const v of k.F) mx = Math.max(mx, Math.abs(v)); spread += mx; }
       let corners = [[-w2, -h2], [w2, -h2], [w2, h2], [-w2, h2]];
       if (piece) {
         const Ri = inv2(piece.relA || [1, 0, 0, 1]);
@@ -1252,6 +1396,20 @@ export class Layer2DEngine {
         const y = (A[2] * cx2 + A[3] * cy2) * spread + t[1];
         x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
       }
+      if (hasF && !piece) {
+        const step = 2 / (gf - 1);
+        for (let iy = 0; iy < gf; iy++) {
+          const g0y = -1 + iy * step;
+          for (let ix = 0; ix < gf; ix++) {
+            const g0x = -1 + ix * step;
+            const fi = (iy * gf + ix) * 2;
+            const lx = (g0x + k.F[fi]) * w2, ly = (g0y + k.F[fi + 1]) * h2;
+            const x = A[0] * lx + A[1] * ly + t[0];
+            const y = A[2] * lx + A[3] * ly + t[1];
+            x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+          }
+        }
+      }
       const px = (L.pad || 260) + mg, py = mg + Math.abs(m.pitch || 0) * 90 + 60;
       gl.uniform4f(U.uBox, x0 - px, y0 - py, x1 + px, y1 + py);
       const Ai = inv2(A);
@@ -1266,7 +1424,7 @@ export class Layer2DEngine {
       gl.uniform1i(U.uJaw, L.jaw ? 1 : 0);
       gl.uniform1i(U.uNoFade, L.noFade ? 1 : 0);
       gl.uniform1f(U.uTurn, k.turn || 0);
-      const [pDy, pSy] = L.kind === 0 && L.head ? this._pitchParams(this._pitchGroup(L.id), m.pitch || 0) : [0, 1];
+      const [pDy, pSy] = L.kind === 0 && L.head ? this._pitchParamsForLayer(L, m.pitch || 0) : [0, 1];
       gl.uniform1f(U.uPitch, pDy);
       gl.uniform1f(U.uPitchScale, pSy);
       gl.uniform1i(U.uHair, 0);
@@ -1311,6 +1469,25 @@ export class Layer2DEngine {
         gl.uniform1i(U.uChainN, 0);
       }
       gl.uniform1i(U.uSheerOn, 0);
+      if (hasF && gf >= 2 && gf <= 15) {
+        const buf = this.fUploadBuf;
+        for (let iy = 0; iy < gf; iy++) {
+          for (let ix = 0; ix < gf; ix++) {
+            const si = (iy * gf + ix) * 2;
+            const di = (iy * gf + ix) * 4;
+            buf[di] = k.F[si];
+            buf[di + 1] = k.F[si + 1];
+            buf[di + 2] = 0;
+            buf[di + 3] = 0;
+          }
+        }
+        gl.activeTexture(gl.TEXTURE10);
+        gl.bindTexture(gl.TEXTURE_2D, this.chainTex);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, this.fBase, gf, gf, gl.RGBA, gl.FLOAT, buf.subarray(0, gf * gf * 4));
+        gl.uniform3i(U.uFInfo, 1, gf, this.fBase);
+      } else {
+        gl.uniform3i(U.uFInfo, 0, 0, this.fBase);
+      }
       if (k.D && k.D.length) {
         const gd = gridSizeOf(k.D);
         gl.uniform1i(U.uHasD, 1);
@@ -1478,6 +1655,9 @@ export class Layer2DEngine {
       const dx = pLayer[0] - pose.t[0], dy = pLayer[1] - pose.t[1];
       let gx = (Ai[0] * dx + Ai[1] * dy) / (L.w * 0.5);
       let gy = (Ai[2] * dx + Ai[3] * dy) / (L.h * 0.5);
+      if (isGridNonZero(k.F)) {
+        [gx, gy] = invertForwardGridJS(gx, gy, k.F, gridSizeOf(k.F));
+      }
       if (k.D && k.D.length) {
         const [ddx, ddy] = sampleD(k.D, gridSizeOf(k.D), gx, gy);
         gx += ddx; gy += ddy;

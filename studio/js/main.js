@@ -379,22 +379,42 @@ async function handleAction(act) {
       const idx = st.selectedLayerIdx;
       P.layers.splice(idx, 1);
       for (const s of P.samples) s.layers.splice(idx, 1);
+      st.deleteLayerDeltas(L.id);
       st.selectLayer(Math.max(0, idx - 1));
       st.emit("pack:mutated", { structural: true });
       showToast(`Deleted layer ${L.id}`);
     } else if (act === "reset-warp") {
-      const SL = st.getActiveSampleLayer();
-      if (!SL) return;
-      st.pushUndo("Reset Warp Grid");
-      delete SL.D;
+      const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+      if (!tgt?.obj) return;
+      st.pushUndo("Reset Mesh");
+      delete tgt.obj.F;
+      if (tgt.kind === "yaw") delete tgt.obj.D;
       st.emit("pack:mutated");
-      showToast("Warp grid reset on active keyform");
+      showToast(`Mesh reset on ${st.getRigTargetLabel()}`);
     } else if (act === "smooth-warp") {
-      const SL = st.getActiveSampleLayer();
-      if (!SL) return;
-      st.pushUndo("Smooth Warp Grid");
-      smoothGrid(SL, 0.35);
+      const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+      if (!tgt?.obj) return;
+      st.pushUndo("Smooth Mesh");
+      smoothGrid(tgt.obj, 0.35);
       st.emit("pack:mutated");
+    } else if (act === "add-yaw-key" && P) {
+      const res = st.addYawKeyform(st.params.a);
+      showToast(res.ok ? `Added Angle X keyform at ${res.deg}°` : res.reason);
+    } else if (act === "del-yaw-key" && P) {
+      const res = st.deleteYawKeyform(st.activeSampleIdx);
+      showToast(res.ok ? "Deleted Angle X keyform" : res.reason);
+    } else if (act === "add-pitch-key" && P) {
+      const res = st.addPitchKeyform(st.params.pitch);
+      showToast(res.ok ? `Added Angle Y keyform at ${res.deg}°` : res.reason);
+    } else if (act === "del-pitch-key" && P) {
+      const res = st.deletePitchKeyform(st.activePitchIdx);
+      showToast(res.ok ? "Deleted Angle Y keyform" : res.reason);
+    } else if (act === "new-blend-shape" && P) {
+      const n = (P.blendShapes?.length || 0) + 1;
+      const name = prompt("New Blend Shape name (e.g. Cheek Puff, Brow Up, Smile Warp):", `Blend ${n}`);
+      if (!name) return;
+      const bs = st.addBlendShape(name);
+      if (bs) showToast(`Editing Blend Shape "${bs.name}" — sculpt with Brush, Lattice, Mesh, or Transform`);
     } else if (act === "view-bust") {
       st.resetCamera("bust");
     } else if (act === "view-full") {
@@ -544,15 +564,34 @@ function syncChrome() {
   document.getElementById("vp-onion").classList.toggle("active", state.view.onionSkin);
   document.getElementById("vp-physics").classList.toggle("active", engine.physics.enabled);
   document.getElementById("vp-yaw").textContent = `Yaw ${(state.params.a * 32.5).toFixed(1)}°`;
+  const pitchEl = document.getElementById("vp-pitch");
+  if (pitchEl) pitchEl.textContent = `Pitch ${(state.params.pitch * 30.0).toFixed(1)}°`;
+  const tgtEl = document.getElementById("vp-target");
+  if (tgtEl) {
+    tgtEl.textContent = state.getRigTargetLabel();
+    tgtEl.className = `vp-target-pill mono ${state.rigTarget.type}`;
+  }
 }
 state.on("mode:changed", syncChrome);
 state.on("tool:changed", syncChrome);
 state.on("view:changed", syncChrome);
 state.on("params:changed", syncChrome);
+state.on("rigTarget:changed", syncChrome);
+state.on("doc:loaded", syncChrome);
 state.on("pack:mutated", (d) => {
   if (engine.P !== state.pack) engine.syncPack(state.pack);
   else if (d?.structural) engine.syncPack();
 });
+
+const vpTargetBtn = document.getElementById("vp-target");
+if (vpTargetBtn) {
+  vpTargetBtn.addEventListener("click", () => {
+    if (state.rigTarget.type !== "yaw") {
+      state.snapToSample(state.activeSampleIdx);
+      showToast("Switched editing target back to Angle X");
+    }
+  });
+}
 
 let zoomPreset = "bust";
 document.getElementById("vp-zoom").addEventListener("click", () => {
@@ -647,6 +686,31 @@ window.addEventListener("keydown", (e) => {
   else if (k === "2") handleAction("view-full");
   else if (k === "f") handleAction("view-layer");
   else if (k === "s") handleAction("toggle-solo");
+  else if (e.key === "Escape") {
+    state.selectedVerts.clear();
+  } else if (e.key === "Delete" || e.key === "Backspace") {
+    if (state.timeline.expanded && state.timeline.selectedKeyIdx >= 0) {
+      e.preventDefault();
+      timeline.deleteSelectedKeyframe();
+    } else if ((state.tool === "lattice" || state.tool === "mesh") && state.selectedVerts.size > 0) {
+      e.preventDefault();
+      const t = state.getEditTargetForLayer(state.selectedLayerIdx, false);
+      if (t?.obj?.F) {
+        state.pushUndo("Reset Selected Mesh Vertices");
+        for (const vi of state.selectedVerts) {
+          if (vi * 2 + 1 < t.obj.F.length) { t.obj.F[vi * 2] = 0; t.obj.F[vi * 2 + 1] = 0; }
+        }
+        state.emit("pack:mutated");
+        showToast(`Reset ${state.selectedVerts.size} mesh vertices`);
+      }
+    }
+  } else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+    const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+    viewport.nudgeSelection(dx, dy);
+  }
 });
 window.addEventListener("keyup", (e) => {
   if (e.code === "Space") viewport.spaceHeld = false;
@@ -674,6 +738,7 @@ function tick(now) {
       if (engine.P !== state.pack) engine.syncPack(state.pack);
       engine.render(state.params, state.view.rect, dt, {
         snapSampleIdx: state.snapToKeyform && !state.timeline.playing ? state.activeSampleIdx : null,
+        snapPitchIdx: state.snapToPitch && !state.timeline.playing ? state.activePitchIdx : null,
         hiddenIds: state.hiddenIds,
         soloId: state.soloId,
         onionSkin: state.view.onionSkin,
@@ -689,6 +754,8 @@ function tick(now) {
 window.__layer2dStudio = {
   state,
   engine,
+  viewport,
+  timeline,
   openL2DBuffer,
   openL2DFromURL,
   importPSDFile,

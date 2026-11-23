@@ -17,6 +17,7 @@ uniform float uBehind;                                 // an earring on the far 
 uniform vec2 uBehindShift;                             // (her left lock: where they cover it this far out, screen px)
 uniform int uRigid; uniform vec2 uRigidD;              // an earring turns as its hook does, unbent (its foot hung below the chin)
 uniform int uKind, uHair, uHasD, uGD, uHook, uVis, uHead, uJaw, uNoFade, uHasHole, uHasWipe, uClipOn, uAlphaOnly, uSkirtN;
+uniform ivec3 uFInfo;                                  // forward mesh grid stored in uChains rows uFInfo.z..: (hasF, gd, fBase)
 uniform mat2 uAi; uniform vec2 uT, uHalf;
 uniform vec2 uD[121];
 uniform float uOp, uHoleS, uWipe, uWipeSoft, uTurn, uPitch, uPitchScale, uJawV, uSign, uChinW;
@@ -134,6 +135,43 @@ vec2 chainShift(vec2 p) {
   // or the ribbon would still be drawn where it lay along the arm as well)
   if (sw) return gs > 0.2 ? mv / gs : p + vec2(1e6);
   return gs > 1e-6 ? mv / gs * clamp(gs / 0.15, 0.0, 1.0) : vec2(0.0);
+}
+// Forward vertex mesh deformation F(t) stored in uChains rows [fBase .. fBase+gd-1]: exact damped 2D Newton inversion of t + F(t) = g
+vec2 evalFGrid(vec2 t, int gd, int fBase, out mat2 J) {
+  float n = float(gd - 1);
+  float s = 0.5 * n;
+  vec2 u = clamp((t + 1.0) * s, 0.0, n);
+  ivec2 i0 = min(ivec2(floor(u)), ivec2(gd - 2));
+  ivec2 i1 = i0 + 1;
+  vec2 f = clamp(u - vec2(i0), 0.0, 1.0);
+  vec2 f00 = texelFetch(uChains, ivec2(i0.x, fBase + i0.y), 0).xy;
+  vec2 f10 = texelFetch(uChains, ivec2(i1.x, fBase + i0.y), 0).xy;
+  vec2 f01 = texelFetch(uChains, ivec2(i0.x, fBase + i1.y), 0).xy;
+  vec2 f11 = texelFetch(uChains, ivec2(i1.x, fBase + i1.y), 0).xy;
+  vec2 fx0 = mix(f00, f10, f.x), fx1 = mix(f01, f11, f.x);
+  vec2 val = mix(fx0, fx1, f.y);
+  vec2 dFdx = mix(f10 - f00, f11 - f01, f.y) * s;
+  vec2 dFdy = mix(f01 - f00, f11 - f10, f.x) * s;
+  if (abs(t.x) > 1.0) dFdx = vec2(0.0);
+  if (abs(t.y) > 1.0) dFdy = vec2(0.0);
+  J = mat2(1.0 + dFdx.x, dFdx.y, dFdy.x, 1.0 + dFdy.y);
+  return val;
+}
+vec2 invertForwardGrid(vec2 g, int gd, int fBase) {
+  mat2 J;
+  vec2 t = g - evalFGrid(g, gd, fBase, J);
+  for (int it = 0; it < 7; it++) {
+    vec2 err = (t + evalFGrid(t, gd, fBase, J)) - g;
+    if (dot(err, err) < 1e-10) break;
+    float det = J[0][0] * J[1][1] - J[1][0] * J[0][1];
+    vec2 stp = abs(det) > 0.05
+      ? vec2(J[1][1] * err.x - J[1][0] * err.y, -J[0][1] * err.x + J[0][0] * err.y) / det
+      : 0.35 * err;
+    float sl = length(stp);
+    if (sl > 0.45) stp *= 0.45 / sl;
+    t -= stp;
+  }
+  return t;
 }
 vec3 boreal(float x) {                                 // mint, sky, lavender, pink, round again
   vec3 a = vec3(0.62, 0.98, 0.86), b = vec3(0.66, 0.84, 1.0), c = vec3(0.80, 0.70, 1.0), d = vec3(1.0, 0.76, 0.93);
@@ -663,7 +701,10 @@ void main() {
   if (uSky == 1) { vec3 d = skyRay(p); vec2 G = d.xy * sphereT(max(d.z, 0.01), uSkyGeo.w, SKY_H0);
     skyRes = clamp(1.6 / sqrt(max(length(dFdx(G)) * length(dFdy(G)), 1e-6)), 0.0, 1.0); }
   vec2 g = (uAi * (p - uT)) / uHalf;                   // the fit's placement, as grid_sample's [-1, 1]
-  if (uHasD == 1) {                                     // its warp grid (align_corners, border)
+  if (uFInfo.x == 1) {                                  // forward vertex mesh / Angle Y / Blend Shape deformation
+    g = invertForwardGrid(g, uFInfo.y, uFInfo.z);
+  }
+  if (uHasD == 1) {                                     // legacy inverse warp grid (align_corners, border)
     float n = float(uGD - 1);
     vec2 f = clamp((g + 1.0) * 0.5 * n, 0.0, n); ivec2 i0 = ivec2(floor(f)); ivec2 i1 = min(i0 + 1, ivec2(uGD - 1));
     vec2 t = f - vec2(i0);

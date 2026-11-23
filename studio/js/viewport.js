@@ -2,19 +2,19 @@
  * Interactive Studio Viewport Controller & 2D Precision Vector Overlay
  * Handles:
  *   - Pan / Zoom (wheel, middle-drag, Space+drag, Hand tool)
- *   - Alpha-accurate click-to-select layer
+ *   - Alpha-accurate click-to-select layer (forward-mesh aware)
+ *   - Unified Rig Target editing: Angle X keyforms, Angle Y keyforms, AND Blend Shapes!
+ *   - Multi-vertex selection (Click, Shift+Click, Marquee box-select) + Soft Selection + Pin Border
+ *   - Forward-mesh 1:1 Lattice & Mesh Vertex dragging with anti-fold protection & rest-wireframe ghost
+ *   - Forward-mesh Liquify Warp Brush (Push / Smooth / Restore)
  *   - Transform gizmo (drag translate, corner scale, top rotation handle)
- *   - Warp Sculpt Brush (circular brush cursor + radial smoothstep Liquify sculpting on D[])
- *   - Warp Lattice Cage & Mesh Vertices (5x5..11x11 crimson/white draggable control handles)
- *   - Spring Physics Chain Spline Editor (draggable joint nodes + add/remove joints)
- *   - Rig Pivot Handles (head centre, neck pivot, waist, shoulders, tail pivot)
+ *   - Spring Physics Chain Spline Editor & Rig Pivot Handles
  */
 
 import {
   latticeCanvasPoints,
-  dragLatticePoint,
+  dragLatticePoints,
   applyWarpBrush,
-  gridSizeOf,
   decomposeAffine,
   composeAffine,
 } from "./warp_math.js";
@@ -88,12 +88,77 @@ export class ViewportController {
     el.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
+  /**
+   * Lock active rig target & resync engine frame state cleanly before mutating a layer.
+   */
+  _prepareEditTarget() {
+    const st = this.state;
+    if (st.rigTarget.type === "yaw") {
+      st.snapToSample(st.activeSampleIdx);
+      this.engine.syncFrameState(st.params, st.activeSampleIdx, st.snapToPitch ? st.activePitchIdx : null);
+    } else if (st.rigTarget.type === "pitch") {
+      st.snapToPitchSample(st.activePitchIdx);
+      this.engine.syncFrameState(st.params, st.snapToKeyform ? st.activeSampleIdx : null, st.activePitchIdx);
+    } else if (st.rigTarget.type === "blend") {
+      const bs = st.getActiveBlendShape();
+      if (bs && Math.abs(st.params.blend[bs.id] ?? 0) < 0.05) {
+        st.setBlendWeight(bs.id, bs.max ?? 1);
+      }
+      this.engine.syncFrameState(st.params, st.snapToKeyform ? st.activeSampleIdx : null, st.snapToPitch ? st.activePitchIdx : null);
+    }
+    return st.getEditTargetForLayer(st.selectedLayerIdx, true);
+  }
+
+  /**
+   * Nudge selected mesh vertices OR selected layer transform by canonical pixels (Arrow keys).
+   */
+  nudgeSelection(dx, dy) {
+    const st = this.state;
+    const L = st.getSelectedLayer();
+    if (!L || st.lockedIds.has(L.id)) return false;
+
+    const lIdx = st.selectedLayerIdx;
+    if ((st.tool === "lattice" || st.tool === "mesh") && st.selectedVerts.size > 0) {
+      st.pushUndo("Nudge Mesh Vertices");
+      const target = this._prepareEditTarget();
+      if (!target || !target.obj) return false;
+      const liveSL = this.engine.getLiveSampleLayer(lIdx);
+      const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
+      const softRadCanon = st.brush.softRadius / Math.max(0.05, this.canonScale());
+      dragLatticePoints(L, target.obj, liveSL, [...st.selectedVerts], dx, dy, {
+        defaultGd: st.brush.gridSize,
+        pinBorder: st.brush.pinBorder,
+        softSelect: st.brush.softSelect,
+        softRadiusCanon: softRadCanon,
+        toScreenFn: toScr,
+        weightScale: target.weightScale,
+      });
+      st.emit("pack:mutated", { structural: false });
+      return true;
+    }
+
+    st.pushUndo("Nudge Layer");
+    const target = this._prepareEditTarget();
+    if (!target || !target.obj) return false;
+    if (target.kind === "yaw") {
+      target.obj.t[0] = +(target.obj.t[0] + dx).toFixed(2);
+      target.obj.t[1] = +(target.obj.t[1] + dy).toFixed(2);
+    } else {
+      const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+      target.obj.dt = target.obj.dt || [0, 0];
+      target.obj.dt[0] = +(target.obj.dt[0] + dx / ws).toFixed(2);
+      target.obj.dt[1] = +(target.obj.dt[1] + dy / ws).toFixed(2);
+    }
+    st.emit("pack:mutated", { structural: false });
+    return true;
+  }
+
   _hitTestHandles(sx, sy) {
     const st = this.state;
     const P = st.pack;
     if (!P) return null;
 
-    // 1. Pivot handles (when Pivot tool or showPivots)
+    // 1. Pivot handles
     if (st.tool === "pivot" || st.view.showPivots) {
       const pivots = this._getPivots();
       for (const pv of pivots) {
@@ -102,7 +167,7 @@ export class ViewportController {
       }
     }
 
-    // 2. Spring chain joints (when Chain tool or showChains) — uses live transformed positions!
+    // 2. Spring chain joints
     if (st.tool === "chain" || st.view.showChains) {
       for (let ci = 0; ci < (P.chains || []).length; ci++) {
         const livePts = this.engine.getChainLivePoints(ci);
@@ -113,17 +178,20 @@ export class ViewportController {
       }
     }
 
-    // 3. Lattice / Mesh vertex handles on selected layer (exact live turned/pitched/rolled position!)
+    // 3. Forward Lattice / Mesh vertex handles on selected layer
     const L = st.getSelectedLayer();
     const lIdx = st.selectedLayerIdx;
     const SL = lIdx >= 0 ? this.engine.getLiveSampleLayer(lIdx) : null;
     if (L && SL && (st.tool === "lattice" || st.tool === "mesh")) {
       const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
       const { gd, pts } = latticeCanvasPoints(L, SL, st.brush.gridSize, toScr);
+      let best = null, bestD = 10;
       for (const pt of pts) {
         const [px, py] = this.canonToScreen(pt.x, pt.y);
-        if (Math.hypot(sx - px, sy - py) <= 9) return { kind: "lattice_pt", ix: pt.ix, iy: pt.iy, gd };
+        const d = Math.hypot(sx - px, sy - py);
+        if (d < bestD) { bestD = d; best = { kind: "lattice_pt", ix: pt.ix, iy: pt.iy, vIdx: pt.vIdx, gd }; }
       }
+      if (best) return best;
     }
 
     // 4. Transform gizmo handles on selected layer
@@ -181,37 +249,80 @@ export class ViewportController {
         return;
       }
       if (hit.kind === "lattice_pt") {
-        st.pushUndo("Sculpt Lattice Point");
-        st.snapToSample(st.activeSampleIdx);
-        this.engine.syncFrameState(st.params, st.activeSampleIdx);
-        this.drag = { type: "lattice_pt", ix: hit.ix, iy: hit.iy, prevCanon: canon };
+        const L = st.getSelectedLayer();
+        if (!L || st.lockedIds.has(L.id)) return;
+        // Multi-vertex selection: Shift toggles; clicking an unselected vertex replaces selection
+        if (e.shiftKey) {
+          if (st.selectedVerts.has(hit.vIdx)) st.selectedVerts.delete(hit.vIdx);
+          else st.selectedVerts.add(hit.vIdx);
+        } else if (!st.selectedVerts.has(hit.vIdx)) {
+          st.selectedVerts.clear();
+          st.selectedVerts.add(hit.vIdx);
+        }
+        this.drag = {
+          type: "lattice_pt",
+          ix: hit.ix,
+          iy: hit.iy,
+          vIdx: hit.vIdx,
+          startX: sx,
+          startY: sy,
+          prevCanon: canon,
+          undoPushed: false,
+          target: null,
+        };
         this.overlay.setPointerCapture(e.pointerId);
         return;
       }
       if (hit.kind === "rot") {
+        const L = st.getSelectedLayer();
+        if (!L || st.lockedIds.has(L.id)) return;
         st.pushUndo("Rotate Layer");
-        st.snapToSample(st.activeSampleIdx);
-        this.engine.syncFrameState(st.params, st.activeSampleIdx);
-        const SL = st.getActiveSampleLayer();
-        const dec = decomposeAffine(SL.A);
+        const target = this._prepareEditTarget();
+        if (!target || !target.obj) return;
+        const liveSL = this.engine.getLiveSampleLayer(st.selectedLayerIdx);
+        const dec = decomposeAffine(target.kind === "yaw" ? target.obj.A : liveSL.A);
         const pLayer = this.engine.screenToLayerCanon(st.selectedLayerIdx, canon);
-        const ang0 = Math.atan2(pLayer[1] - SL.t[1], pLayer[0] - SL.t[0]);
-        this.drag = { type: "rot", dec, ang0 };
+        const ang0 = Math.atan2(pLayer[1] - liveSL.t[1], pLayer[0] - liveSL.t[0]);
+        this.drag = {
+          type: "rot",
+          target,
+          dec,
+          origDRot: target.obj.dRot || 0,
+          pivot: [...liveSL.t],
+          ang0,
+        };
         this.overlay.setPointerCapture(e.pointerId);
         return;
       }
       if (hit.kind === "scale") {
+        const L = st.getSelectedLayer();
+        if (!L || st.lockedIds.has(L.id)) return;
         st.pushUndo("Scale Layer");
-        st.snapToSample(st.activeSampleIdx);
-        this.engine.syncFrameState(st.params, st.activeSampleIdx);
-        const SL = st.getActiveSampleLayer();
-        const dec = decomposeAffine(SL.A);
+        const target = this._prepareEditTarget();
+        if (!target || !target.obj) return;
+        const liveSL = this.engine.getLiveSampleLayer(st.selectedLayerIdx);
+        const dec = decomposeAffine(target.kind === "yaw" ? target.obj.A : liveSL.A);
         const pLayer = this.engine.screenToLayerCanon(st.selectedLayerIdx, canon);
-        const d0 = Math.max(10, Math.hypot(pLayer[0] - SL.t[0], pLayer[1] - SL.t[1]));
-        this.drag = { type: "scale", dec, d0 };
+        const d0 = Math.max(10, Math.hypot(pLayer[0] - liveSL.t[0], pLayer[1] - liveSL.t[1]));
+        this.drag = {
+          type: "scale",
+          target,
+          dec,
+          origDScale: target.obj.dScale ? [...target.obj.dScale] : [0, 0],
+          pivot: [...liveSL.t],
+          d0,
+        };
         this.overlay.setPointerCapture(e.pointerId);
         return;
       }
+    }
+
+    // Marquee box-select vertices when clicking empty canvas in Lattice / Mesh tool
+    if (st.tool === "lattice" || st.tool === "mesh") {
+      if (!e.shiftKey) st.selectedVerts.clear();
+      this.drag = { type: "marquee", startX: sx, startY: sy, curX: sx, curY: sy, additive: e.shiftKey };
+      this.overlay.setPointerCapture(e.pointerId);
+      return;
     }
 
     // Warp Sculpt Brush
@@ -219,15 +330,15 @@ export class ViewportController {
       const L = st.getSelectedLayer();
       if (L && !st.lockedIds.has(L.id)) {
         st.pushUndo("Warp Brush Stroke");
-        st.snapToSample(st.activeSampleIdx);
-        this.engine.syncFrameState(st.params, st.activeSampleIdx);
-        this.drag = { type: "warp_brush", prevCanon: canon };
+        const target = this._prepareEditTarget();
+        if (!target || !target.obj) return;
+        this.drag = { type: "warp_brush", prevCanon: canon, target };
         this.overlay.setPointerCapture(e.pointerId);
         return;
       }
     }
 
-    // Transform tool drag anywhere on selected layer (or pick layer first)
+    // Transform / Select tool
     if (st.tool === "transform" || st.tool === "select") {
       const picked = this.engine.pickLayerAt(
         canon[0], canon[1],
@@ -243,12 +354,16 @@ export class ViewportController {
       }
       const L = st.getSelectedLayer();
       if (L && st.tool === "transform" && !st.lockedIds.has(L.id)) {
-        st.pushUndo("Move Layer");
-        st.snapToSample(st.activeSampleIdx);
-        this.engine.syncFrameState(st.params, st.activeSampleIdx);
-        const SL = st.getActiveSampleLayer();
-        const startLayer = this.engine.screenToLayerCanon(st.selectedLayerIdx, canon);
-        this.drag = { type: "translate", startLayer, origT: [...SL.t] };
+        this.drag = {
+          type: "translate",
+          startX: sx,
+          startY: sy,
+          startCanon: canon,
+          undoPushed: false,
+          target: null,
+          startLayer: null,
+          origT: null,
+        };
         this.overlay.setPointerCapture(e.pointerId);
       }
     }
@@ -280,6 +395,12 @@ export class ViewportController {
       return;
     }
 
+    if (this.drag.type === "marquee") {
+      this.drag.curX = sx;
+      this.drag.curY = sy;
+      return;
+    }
+
     if (this.drag.type === "pivot") {
       this.drag.pivot.set(Math.round(canon[0]), Math.round(canon[1]));
       st.emit("pack:mutated", { structural: true });
@@ -300,52 +421,106 @@ export class ViewportController {
 
     const L = st.getSelectedLayer();
     const lIdx = st.selectedLayerIdx;
-    const SL = st.getActiveSampleLayer();
-    if (!L || !SL) return;
+    if (!L || lIdx < 0) return;
 
     if (this.drag.type === "translate") {
+      if (!this.drag.undoPushed) {
+        if (Math.hypot(sx - this.drag.startX, sy - this.drag.startY) < 2) return;
+        st.pushUndo("Move Layer");
+        const target = this._prepareEditTarget();
+        if (!target || !target.obj) return;
+        this.drag.target = target;
+        this.drag.startLayer = this.engine.screenToLayerCanon(lIdx, this.drag.startCanon);
+        this.drag.origT = target.kind === "yaw" ? [...target.obj.t] : [...(target.obj.dt || [0, 0])];
+        this.drag.undoPushed = true;
+      }
+      const target = this.drag.target;
       const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
-      SL.t[0] = +(this.drag.origT[0] + (currLayer[0] - this.drag.startLayer[0])).toFixed(2);
-      SL.t[1] = +(this.drag.origT[1] + (currLayer[1] - this.drag.startLayer[1])).toFixed(2);
+      const dx = currLayer[0] - this.drag.startLayer[0];
+      const dy = currLayer[1] - this.drag.startLayer[1];
+      if (target.kind === "yaw") {
+        target.obj.t[0] = +(this.drag.origT[0] + dx).toFixed(2);
+        target.obj.t[1] = +(this.drag.origT[1] + dy).toFixed(2);
+      } else {
+        const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+        target.obj.dt = [+(this.drag.origT[0] + dx / ws).toFixed(2), +(this.drag.origT[1] + dy / ws).toFixed(2)];
+      }
       st.emit("pack:mutated", { structural: false });
       return;
     }
 
     if (this.drag.type === "rot") {
+      const target = this.drag.target;
       const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
-      const ang = Math.atan2(currLayer[1] - SL.t[1], currLayer[0] - SL.t[0]);
-      const deg = this.drag.dec.rotDeg + ((ang - this.drag.ang0) * 180) / Math.PI;
-      SL.A = composeAffine(this.drag.dec.sx, this.drag.dec.sy, deg);
+      const ang = Math.atan2(currLayer[1] - this.drag.pivot[1], currLayer[0] - this.drag.pivot[0]);
+      const deltaDeg = ((ang - this.drag.ang0) * 180) / Math.PI;
+      if (target.kind === "yaw") {
+        target.obj.A = composeAffine(this.drag.dec.sx, this.drag.dec.sy, this.drag.dec.rotDeg + deltaDeg);
+      } else {
+        const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+        target.obj.dRot = +(this.drag.origDRot + deltaDeg / ws).toFixed(3);
+      }
       st.emit("pack:mutated", { structural: false });
       return;
     }
 
     if (this.drag.type === "scale") {
+      const target = this.drag.target;
       const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
-      const d = Math.max(10, Math.hypot(currLayer[0] - SL.t[0], currLayer[1] - SL.t[1]));
+      const d = Math.max(10, Math.hypot(currLayer[0] - this.drag.pivot[0], currLayer[1] - this.drag.pivot[1]));
       const f = d / this.drag.d0;
-      SL.A = composeAffine(this.drag.dec.sx * f, this.drag.dec.sy * f, this.drag.dec.rotDeg);
+      if (target.kind === "yaw") {
+        target.obj.A = composeAffine(this.drag.dec.sx * f, this.drag.dec.sy * f, this.drag.dec.rotDeg);
+      } else {
+        const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+        const ds = (f - 1) / ws;
+        target.obj.dScale = [+(this.drag.origDScale[0] + ds).toFixed(4), +(this.drag.origDScale[1] + ds).toFixed(4)];
+      }
       st.emit("pack:mutated", { structural: false });
       return;
     }
 
     if (this.drag.type === "lattice_pt") {
+      if (!this.drag.undoPushed) {
+        if (Math.hypot(sx - this.drag.startX, sy - this.drag.startY) < 1.5) return;
+        st.pushUndo("Sculpt Mesh Vertices");
+        const target = this._prepareEditTarget();
+        if (!target || !target.obj) return;
+        this.drag.target = target;
+        this.drag.undoPushed = true;
+      }
+      const target = this.drag.target;
+      const liveSL = this.engine.getLiveSampleLayer(lIdx);
       const prevLayer = this.engine.screenToLayerCanon(lIdx, this.drag.prevCanon);
       const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
       const dx = currLayer[0] - prevLayer[0];
       const dy = currLayer[1] - prevLayer[1];
-      dragLatticePoint(L, SL, this.drag.ix, this.drag.iy, dx, dy, st.brush.gridSize);
+      const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
+      const softRadCanon = st.brush.softRadius / Math.max(0.05, this.canonScale());
+      const verts = st.selectedVerts.size ? [...st.selectedVerts] : [this.drag.vIdx];
+      dragLatticePoints(L, target.obj, liveSL, verts, dx, dy, {
+        defaultGd: st.brush.gridSize,
+        pinBorder: st.brush.pinBorder,
+        softSelect: st.brush.softSelect,
+        softRadiusCanon: softRadCanon,
+        toScreenFn: toScr,
+        weightScale: target.weightScale,
+      });
       this.drag.prevCanon = canon;
       st.emit("pack:mutated", { structural: false });
       return;
     }
 
     if (this.drag.type === "warp_brush") {
+      const target = this.drag.target;
+      if (!target || !target.obj) return;
+      const liveSL = this.engine.getLiveSampleLayer(lIdx);
       const radCanon = st.brush.radius / Math.max(0.05, this.canonScale());
       const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
       const toLay = (p) => this.engine.screenToLayerCanon(lIdx, p);
       const changed = applyWarpBrush(
-        L, SL, this.drag.prevCanon, canon, radCanon, st.brush.strength, st.brush.mode, st.brush.gridSize, toScr, toLay,
+        L, target.obj, this.drag.prevCanon, canon, radCanon, st.brush.strength, st.brush.mode, st.brush.gridSize, toScr, toLay,
+        { liveSampleLayer: liveSL, pinBorder: st.brush.pinBorder, weightScale: target.weightScale },
       );
       this.drag.prevCanon = canon;
       if (changed) st.emit("pack:mutated", { structural: false });
@@ -354,6 +529,24 @@ export class ViewportController {
 
   _onUp() {
     if (!this.drag) return;
+    if (this.drag.type === "marquee") {
+      const st = this.state;
+      const L = st.getSelectedLayer();
+      const lIdx = st.selectedLayerIdx;
+      const SL = lIdx >= 0 ? this.engine.getLiveSampleLayer(lIdx) : null;
+      if (L && SL) {
+        const x0 = Math.min(this.drag.startX, this.drag.curX), x1 = Math.max(this.drag.startX, this.drag.curX);
+        const y0 = Math.min(this.drag.startY, this.drag.curY), y1 = Math.max(this.drag.startY, this.drag.curY);
+        if (x1 - x0 > 4 || y1 - y0 > 4) {
+          const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
+          const { pts } = latticeCanvasPoints(L, SL, st.brush.gridSize, toScr);
+          for (const pt of pts) {
+            const [px, py] = this.canonToScreen(pt.x, pt.y);
+            if (px >= x0 && px <= x1 && py >= y0 && py <= y1) st.selectedVerts.add(pt.vIdx);
+          }
+        }
+      }
+    }
     this.drag = null;
     this._updateCursor();
   }
@@ -364,7 +557,7 @@ export class ViewportController {
     if (st.tool === "pan" || this.spaceHeld) { this.overlay.style.cursor = "grab"; return; }
     if (st.tool === "warp_brush") { this.overlay.style.cursor = "none"; return; }
     if (this.hoverHandle) { this.overlay.style.cursor = "pointer"; return; }
-    this.overlay.style.cursor = st.tool === "transform" ? "move" : "default";
+    this.overlay.style.cursor = st.tool === "transform" ? "move" : (st.tool === "lattice" || st.tool === "mesh" ? "crosshair" : "default");
   }
 
   _getPivots() {
@@ -416,7 +609,7 @@ export class ViewportController {
     const P = st.pack;
     if (!P) return;
 
-    // 1. Subtle architectural grid (when Grid toggle on)
+    // 1. Subtle architectural grid
     if (st.view.showGrid) {
       const vw = this.engine.lastView;
       const step = 200;
@@ -436,7 +629,7 @@ export class ViewportController {
       ctx.stroke();
     }
 
-    // 2. Spring Physics Chains spline overlay (live transformed with head turn/pitch/roll + spring physics!)
+    // 2. Spring Physics Chains spline overlay
     if (st.view.showChains && P.chains && P.chains.length) {
       P.chains.forEach((ch, ci) => {
         const isSel = ci === st.selectedChainIdx;
@@ -464,7 +657,7 @@ export class ViewportController {
       });
     }
 
-    // 3. Selected Layer Lattice Cage / Mesh Triangulation / Transform Gizmo (exact 1:1 live shader tracking!)
+    // 3. Selected Layer Forward Lattice Cage / Mesh Triangulation / Transform Gizmo
     const L = st.getSelectedLayer();
     const lIdx = st.selectedLayerIdx;
     const SL = lIdx >= 0 ? this.engine.getLiveSampleLayer(lIdx) : null;
@@ -472,12 +665,52 @@ export class ViewportController {
       const showLat = st.view.showLattice && (st.tool === "warp_brush" || st.tool === "lattice" || st.tool === "mesh");
       if (showLat) {
         const toScr = (p) => this.engine.layerToScreenCanon(lIdx, p);
-        const { gd, pts } = latticeCanvasPoints(L, SL, st.brush.gridSize, toScr);
+        const { gd, pts, health } = latticeCanvasPoints(L, SL, st.brush.gridSize, toScr);
         const sPts = pts.map((p) => this.canonToScreen(p.x, p.y));
+        const rPts = pts.map((p) => this.canonToScreen(p.rx, p.ry));
+        const isBlend = st.rigTarget.type === "blend";
+        const isPitch = st.rigTarget.type === "pitch";
+
         ctx.save();
-        // Horizontal & vertical lattice lines
-        ctx.strokeStyle = "rgba(190, 30, 60, 0.72)";
-        ctx.lineWidth = 1.1;
+        // Faint rest-pose ghost wireframe so riggers can judge exact displacement
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.10)";
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        for (let iy = 0; iy < gd; iy++) {
+          for (let ix = 0; ix < gd - 1; ix++) {
+            const a = rPts[iy * gd + ix], b = rPts[iy * gd + ix + 1];
+            ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+          }
+        }
+        for (let ix = 0; ix < gd; ix++) {
+          for (let iy = 0; iy < gd - 1; iy++) {
+            const a = rPts[iy * gd + ix], b = rPts[(iy + 1) * gd + ix];
+            ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+          }
+        }
+        ctx.stroke();
+
+        // Fold-over / pinch warning highlight on any stressed quad
+        if (health) {
+          for (let iy = 0; iy < gd - 1; iy++) {
+            for (let ix = 0; ix < gd - 1; ix++) {
+              const r = health[iy * (gd - 1) + ix];
+              if (r < 0.25) {
+                const a = sPts[iy * gd + ix], b = sPts[iy * gd + ix + 1];
+                const c = sPts[(iy + 1) * gd + ix + 1], d = sPts[(iy + 1) * gd + ix];
+                ctx.fillStyle = r < 0.12 ? "rgba(255, 59, 92, 0.26)" : "rgba(245, 166, 35, 0.16)";
+                ctx.beginPath();
+                ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]);
+                ctx.closePath();
+                ctx.fill();
+              }
+            }
+          }
+        }
+
+        // Active deformed wireframe (color-coded by rig target: crimson=Yaw, sky=Angle Y, violet=Blend Shape!)
+        ctx.strokeStyle = isBlend ? "rgba(176, 118, 255, 0.82)" : isPitch ? "rgba(88, 178, 255, 0.82)" : "rgba(190, 30, 60, 0.78)";
+        ctx.lineWidth = 1.15;
         ctx.beginPath();
         for (let iy = 0; iy < gd; iy++) {
           for (let ix = 0; ix < gd - 1; ix++) {
@@ -491,7 +724,6 @@ export class ViewportController {
             ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
           }
         }
-        // Extra diagonals in Mesh tool mode
         if (st.tool === "mesh") {
           for (let iy = 0; iy < gd - 1; iy++) {
             for (let ix = 0; ix < gd - 1; ix++) {
@@ -502,24 +734,43 @@ export class ViewportController {
         }
         ctx.stroke();
 
-        // Crisp crimson/white square control vertices
+        // Crisp square control vertices (selected = bright cyan/white, pinned border = dim hollow)
+        const accentFill = isBlend ? "#9a5cff" : isPitch ? "#3c9dff" : "#be1e3c";
         for (let i = 0; i < sPts.length; i++) {
           const [px, py] = sPts[i];
-          const isHover = this.hoverHandle?.kind === "lattice_pt" &&
-            this.hoverHandle.ix === pts[i].ix && this.hoverHandle.iy === pts[i].iy;
-          const sz = isHover ? 7 : 5;
-          ctx.fillStyle = isHover ? "#ffffff" : "#be1e3c";
+          const pt = pts[i];
+          const isHover = this.hoverHandle?.kind === "lattice_pt" && this.hoverHandle.vIdx === pt.vIdx;
+          const isSel = st.selectedVerts.has(pt.vIdx);
+          const isPinned = st.brush.pinBorder && (pt.ix === 0 || pt.iy === 0 || pt.ix === gd - 1 || pt.iy === gd - 1);
+          const sz = isSel ? 8 : (isHover ? 7 : 5);
+          ctx.fillStyle = isSel ? "#5ce1e6" : (isHover ? "#ffffff" : (isPinned ? "#15171d" : accentFill));
           ctx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
-          ctx.strokeStyle = "rgba(255,255,255,0.85)";
-          ctx.lineWidth = 0.9;
+          ctx.strokeStyle = isSel ? "#ffffff" : (isPinned ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.85)");
+          ctx.lineWidth = isSel ? 1.5 : 0.9;
           ctx.strokeRect(px - sz / 2, py - sz / 2, sz, sz);
+        }
+
+        // Soft-selection radius ring when enabled and vertices selected
+        if ((st.tool === "lattice" || st.tool === "mesh") && st.brush.softSelect && st.selectedVerts.size > 0) {
+          const firstV = [...st.selectedVerts][0];
+          if (sPts[firstV]) {
+            ctx.beginPath();
+            ctx.setLineDash([4, 4]);
+            ctx.arc(sPts[firstV][0], sPts[firstV][1], st.brush.softRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(92, 225, 230, 0.45)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
         }
         ctx.restore();
       } else if ((st.tool === "transform" || st.tool === "select") && st.mode !== "animate" && st.mode !== "expressions") {
         const box = this._layerBoxScreen(L, lIdx, SL);
         if (box) {
           ctx.save();
-          ctx.strokeStyle = "rgba(190, 30, 60, 0.85)";
+          ctx.strokeStyle = st.rigTarget.type === "blend" ? "rgba(176, 118, 255, 0.9)"
+            : st.rigTarget.type === "pitch" ? "rgba(88, 178, 255, 0.9)"
+            : "rgba(190, 30, 60, 0.85)";
           ctx.lineWidth = 1.25;
           ctx.beginPath();
           ctx.moveTo(box.corners[0][0], box.corners[0][1]);
@@ -527,7 +778,6 @@ export class ViewportController {
           ctx.closePath();
           ctx.stroke();
 
-          // Rotation stem & handle
           ctx.beginPath();
           ctx.moveTo(box.topMid[0], box.topMid[1]);
           ctx.lineTo(box.rotHandle[0], box.rotHandle[1]);
@@ -537,7 +787,6 @@ export class ViewportController {
           ctx.fillStyle = "#be1e3c"; ctx.fill();
           ctx.strokeStyle = "#f2f3f5"; ctx.stroke();
 
-          // Corner scale handles
           for (const [cx, cy] of box.corners) {
             ctx.fillStyle = "#f2f3f5";
             ctx.fillRect(cx - 3.5, cy - 3.5, 7, 7);
@@ -545,7 +794,6 @@ export class ViewportController {
             ctx.strokeRect(cx - 3.5, cy - 3.5, 7, 7);
           }
 
-          // Center crosshair
           ctx.strokeStyle = "rgba(255,255,255,0.8)";
           ctx.beginPath();
           ctx.moveTo(box.center[0] - 6, box.center[1]); ctx.lineTo(box.center[0] + 6, box.center[1]);
@@ -556,7 +804,23 @@ export class ViewportController {
       }
     }
 
-    // 4. Rig Pivot Handles (Neck, Waist, Shoulders, Head Center, Tail Pivot)
+    // 4. Marquee Box-Select Rectangle
+    if (this.drag && this.drag.type === "marquee") {
+      const x = Math.min(this.drag.startX, this.drag.curX);
+      const y = Math.min(this.drag.startY, this.drag.curY);
+      const w = Math.abs(this.drag.curX - this.drag.startX);
+      const h = Math.abs(this.drag.curY - this.drag.startY);
+      ctx.save();
+      ctx.fillStyle = "rgba(92, 225, 230, 0.12)";
+      ctx.strokeStyle = "rgba(92, 225, 230, 0.85)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+      ctx.restore();
+    }
+
+    // 5. Rig Pivot Handles
     if (st.view.showPivots || st.tool === "pivot") {
       const pivots = this._getPivots();
       ctx.save();
@@ -574,17 +838,22 @@ export class ViewportController {
       ctx.restore();
     }
 
-    // 5. Crisp Warp Brush Ring Cursor (matching studio_concept_rigging.png!)
+    // 6. Crisp Warp Brush Ring Cursor
     if (st.tool === "warp_brush" && this.pointer.inside && !this.spaceHeld) {
       const r = st.brush.radius;
       const px = this.pointer.x, py = this.pointer.y;
+      const strokeCol = st.brush.mode === "restore" ? "rgba(62, 224, 143, 0.9)"
+        : st.brush.mode === "smooth" ? "rgba(116, 185, 255, 0.9)"
+        : st.rigTarget.type === "blend" ? "rgba(176, 118, 255, 0.92)"
+        : st.rigTarget.type === "pitch" ? "rgba(88, 178, 255, 0.92)"
+        : "rgba(190, 30, 60, 0.92)";
       ctx.save();
       ctx.beginPath();
       ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(190, 30, 60, 0.92)";
+      ctx.strokeStyle = strokeCol;
       ctx.lineWidth = 1.4;
       ctx.stroke();
-      ctx.fillStyle = "rgba(190, 30, 60, 0.08)";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
       ctx.fill();
       ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
       ctx.lineWidth = 1;

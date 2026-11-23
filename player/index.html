@@ -50,6 +50,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 #bar .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
 #bar input[type="range"] { width: 120px; accent-color: var(--accent); }
+#bar .sync-wrap { display: inline-flex; align-items: center; gap: 5px; }
+#bar .sync-wrap input[type="range"] { width: 88px; }
+#bar .mono-val { font: 11px/1 var(--font-data); color: var(--muted); min-width: 36px; font-variant-numeric: tabular-nums; }
+#phoneme-pill { font: 600 11px/1 var(--font-data); color: var(--fg); background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 999px; padding: 5px 8px;
+  min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; }
 #err { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; padding: 24px; text-align: center; }
 </style>
 
@@ -66,6 +72,12 @@ button[aria-pressed="true"] { background: var(--accent); border-color: var(--acc
     <button id="clear-l2d" hidden title="Forget the locally saved .l2d avatar in this slot">Clear saved</button>
     <button id="obs-link" aria-pressed="false" title="Start P2P OBS Link — stream your .l2d, webcam, mic &amp; controls straight into a transparent OBS Browser Source (no server or OBS flags needed)">OBS Link</button>
     <button id="copy-obs" hidden title="Copy the OBS Browser Source URL for this link">Copy URL</button>
+    <button id="obs-audio" aria-pressed="true" hidden title="Tunnel live mic audio through the OBS Browser Source so playback and avatar mouth stay frame-synced (enable 'Control audio via OBS' and mute raw OBS mic)">OBS Audio: ON</button>
+    <label id="obs-sync-wrap" class="sync-wrap" hidden title="Delay tunneled OBS audio (0–300 ms) so phoneme look-ahead + WebGL2 rendering stay locked to voice playback">
+      <span class="label">Sync</span>
+      <input id="obs-delay" type="range" min="0" max="300" step="5" value="90">
+      <span id="obs-delay-val" class="mono-val">90ms</span>
+    </label>
     <input id="l2d-file" type="file" accept=".l2d,.zip" hidden>
   </div>
   <div class="group" role="group" aria-label="View">
@@ -85,6 +97,8 @@ button[aria-pressed="true"] { background: var(--accent); border-color: var(--acc
   <div class="group" role="group" aria-label="Live">
     <span class="label">Live</span>
     <button id="mic" aria-pressed="false">Mic</button>
+    <button id="lip-mode" aria-pressed="true" title="Cycle lip-sync engine: Phoneme (LPC formants + consonants) → Basic (3-band AEIOU) → Volume">Lip: Phoneme</button>
+    <span id="phoneme-pill" hidden title="Live detected phoneme → avatar mouth viseme">—</span>
     <button id="cam" aria-pressed="false">Cam</button>
     <button id="bg-btn" aria-pressed="false">BG: Light</button>
   </div>
@@ -227,7 +241,8 @@ let hairPick = null;             // the Hair buttons' colour (export.TINT), or h
 let eyePick = null;              // the Eyes buttons' (export.EYE_TINT)
 let stylePick = null;            // the Style buttons' hairstyle (export.STYLE_*), or her own
 let P, gl, prog, U = {}, tex = {}, holes = {}, wipes = {}, opens = {}, skirtTex, lockTex, lockRows, clipFbo = {}, clipOrder = [], view = "bust";
-let sheers = {}, chainTex, chainRows, CH = [];   // (opt-in: meshpack's sheer maps and spring chains)
+let sheers = {}, chainTex, chainRows, CH = [], fBase = 1;   // (opt-in: meshpack's sheer maps and spring chains + forward mesh F)
+const fUploadBuf = new Float32Array(16 * 16 * 4);
 let ARM = null;                  // (opt-in: the pack's "arm3d") the drawn arms, viewer/arm3d.js
 const chainIds = new Int32Array(8);
 const visRows = new Float32Array(4 * 24);
@@ -250,6 +265,7 @@ uniform float uBehind;                                 // an earring on the far 
 uniform vec2 uBehindShift;                             // (her left lock: where they cover it this far out, screen px)
 uniform int uRigid; uniform vec2 uRigidD;              // an earring turns as its hook does, unbent (its foot hung below the chin)
 uniform int uKind, uHair, uHasD, uGD, uHook, uVis, uHead, uJaw, uNoFade, uHasHole, uHasWipe, uClipOn, uAlphaOnly, uSkirtN;
+uniform ivec3 uFInfo;                                  // forward vertex mesh F stored in uChains rows uFInfo.z..: (hasF, gd, fBase)
 uniform mat2 uAi; uniform vec2 uT, uHalf;
 uniform vec2 uD[121];
 uniform float uOp, uHoleS, uWipe, uWipeSoft, uTurn, uPitch, uPitchScale, uJawV, uSign, uChinW;
@@ -367,6 +383,43 @@ vec2 chainShift(vec2 p) {
   // or the ribbon would still be drawn where it lay along the arm as well)
   if (sw) return gs > 0.2 ? mv / gs : p + vec2(1e6);
   return gs > 1e-6 ? mv / gs * clamp(gs / 0.15, 0.0, 1.0) : vec2(0.0);
+}
+// Forward vertex mesh deformation F(t) stored in uChains rows [fBase .. fBase+gd-1]: exact damped 2D Newton inversion of t + F(t) = g
+vec2 evalFGrid(vec2 t, int gd, int fBase, out mat2 J) {
+  float n = float(gd - 1);
+  float s = 0.5 * n;
+  vec2 u = clamp((t + 1.0) * s, 0.0, n);
+  ivec2 i0 = min(ivec2(floor(u)), ivec2(gd - 2));
+  ivec2 i1 = i0 + 1;
+  vec2 f = clamp(u - vec2(i0), 0.0, 1.0);
+  vec2 f00 = texelFetch(uChains, ivec2(i0.x, fBase + i0.y), 0).xy;
+  vec2 f10 = texelFetch(uChains, ivec2(i1.x, fBase + i0.y), 0).xy;
+  vec2 f01 = texelFetch(uChains, ivec2(i0.x, fBase + i1.y), 0).xy;
+  vec2 f11 = texelFetch(uChains, ivec2(i1.x, fBase + i1.y), 0).xy;
+  vec2 fx0 = mix(f00, f10, f.x), fx1 = mix(f01, f11, f.x);
+  vec2 val = mix(fx0, fx1, f.y);
+  vec2 dFdx = mix(f10 - f00, f11 - f01, f.y) * s;
+  vec2 dFdy = mix(f01 - f00, f11 - f10, f.x) * s;
+  if (abs(t.x) > 1.0) dFdx = vec2(0.0);
+  if (abs(t.y) > 1.0) dFdy = vec2(0.0);
+  J = mat2(1.0 + dFdx.x, dFdx.y, dFdy.x, 1.0 + dFdy.y);
+  return val;
+}
+vec2 invertForwardGrid(vec2 g, int gd, int fBase) {
+  mat2 J;
+  vec2 t = g - evalFGrid(g, gd, fBase, J);
+  for (int it = 0; it < 7; it++) {
+    vec2 err = (t + evalFGrid(t, gd, fBase, J)) - g;
+    if (dot(err, err) < 1e-10) break;
+    float det = J[0][0] * J[1][1] - J[1][0] * J[0][1];
+    vec2 stp = abs(det) > 0.05
+      ? vec2(J[1][1] * err.x - J[1][0] * err.y, -J[0][1] * err.x + J[0][0] * err.y) / det
+      : 0.35 * err;
+    float sl = length(stp);
+    if (sl > 0.45) stp *= 0.45 / sl;
+    t -= stp;
+  }
+  return t;
 }
 vec3 boreal(float x) {                                 // mint, sky, lavender, pink, round again
   vec3 a = vec3(0.62, 0.98, 0.86), b = vec3(0.66, 0.84, 1.0), c = vec3(0.80, 0.70, 1.0), d = vec3(1.0, 0.76, 0.93);
@@ -896,6 +949,9 @@ void main() {
   if (uSky == 1) { vec3 d = skyRay(p); vec2 G = d.xy * sphereT(max(d.z, 0.01), uSkyGeo.w, SKY_H0);
     skyRes = clamp(1.6 / sqrt(max(length(dFdx(G)) * length(dFdy(G)), 1e-6)), 0.0, 1.0); }
   vec2 g = (uAi * (p - uT)) / uHalf;                   // the fit's placement, as grid_sample's [-1, 1]
+  if (uFInfo.x == 1) {                                  // forward vertex mesh / Angle Y / Blend Shape deformation
+    g = invertForwardGrid(g, uFInfo.y, uFInfo.z);
+  }
   if (uHasD == 1) {                                     // its warp grid (align_corners, border)
     float n = float(uGD - 1);
     vec2 f = clamp((g + 1.0) * 0.5 * n, 0.0, n); ivec2 i0 = ivec2(floor(f)); ivec2 i1 = min(i0 + 1, ivec2(uGD - 1));
@@ -1026,24 +1082,144 @@ function upload(im, mip) {
   return t;
 }
 
-// ---- the keyforms: neighbouring samples of the head turn, blended -------------------------------------------------
+// ---- the keyforms: Angle X samples, Angle Y pitchSamples, and additive Blend Shapes -------------------------------
 function lerp(a, b, f) { return a + (b - a) * f; }
 function lerpArr(a, b, f) { const o = new Array(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] + (b[i] - a[i]) * f; return o; }
+function gridSizeOf(G) { return (G && G.length) ? Math.round(Math.sqrt(G.length / 2)) : 0; }
+function isGridNonZero(G) { if (!G || !G.length) return false; for (let i = 0; i < G.length; i++) if (Math.abs(G[i]) > 1e-5) return true; return false; }
+function sampleGrid(G, gd, gx, gy) {
+  const n = gd - 1, fx = Math.max(0, Math.min(n, (gx + 1) * 0.5 * n)), fy = Math.max(0, Math.min(n, (gy + 1) * 0.5 * n));
+  const x0 = Math.min(gd - 2, Math.floor(fx)), y0 = Math.min(gd - 2, Math.floor(fy)), tx = fx - x0, ty = fy - y0;
+  const i00 = (y0 * gd + x0) * 2, i10 = i00 + 2, i01 = i00 + gd * 2, i11 = i01 + 2;
+  const ax = G[i00] + (G[i10] - G[i00]) * tx, ay = G[i00 + 1] + (G[i10 + 1] - G[i00 + 1]) * tx;
+  const bx = G[i01] + (G[i11] - G[i01]) * tx, by = G[i01 + 1] + (G[i11 + 1] - G[i01 + 1]) * tx;
+  return [ax + (bx - ax) * ty, ay + (by - ay) * ty];
+}
+function resampleGrid(oldG, oldGd, newGd) {
+  const out = new Array(newGd * newGd * 2).fill(0);
+  if (!oldG || oldGd < 2) return out;
+  for (let iy = 0; iy < newGd; iy++) {
+    const gy = -1 + (2 * iy) / (newGd - 1);
+    for (let ix = 0; ix < newGd; ix++) {
+      const gx = -1 + (2 * ix) / (newGd - 1);
+      const [dx, dy] = sampleGrid(oldG, oldGd, gx, gy);
+      const i = (iy * newGd + ix) * 2; out[i] = dx; out[i + 1] = dy;
+    }
+  }
+  return out;
+}
+function lerpGrids(gA, gB, f) {
+  const gdA = gridSizeOf(gA), gdB = gridSizeOf(gB);
+  if (!gdA && !gdB) return null;
+  if (f <= 1e-6) return gdA ? gA.slice() : null;
+  if (f >= 1 - 1e-6) return gdB ? gB.slice() : null;
+  const gd = Math.max(gdA, gdB);
+  const a = gdA === gd ? gA : (gdA ? resampleGrid(gA, gdA, gd) : null);
+  const b = gdB === gd ? gB : (gdB ? resampleGrid(gB, gdB, gd) : null);
+  const len = gd * gd * 2, out = new Array(len), omf = 1 - f;
+  for (let i = 0; i < len; i++) out[i] = (a ? a[i] * omf : 0) + (b ? b[i] * f : 0);
+  return out;
+}
+function addScaledGrid(accum, addG, w) {
+  if (!addG || !addG.length || Math.abs(w) < 1e-6) return accum;
+  const gdAdd = gridSizeOf(addG), gdAcc = gridSizeOf(accum);
+  if (gdAdd < 2) return accum;
+  if (!gdAcc) return addG.map((v) => v * w);
+  const gd = Math.max(gdAcc, gdAdd);
+  const base = gdAcc === gd ? accum.slice() : resampleGrid(accum, gdAcc, gd);
+  const rhs = gdAdd === gd ? addG : resampleGrid(addG, gdAdd, gd);
+  for (let i = 0; i < base.length; i++) base[i] += rhs[i] * w;
+  return base;
+}
+function applyLayerDelta(base, delta, w) {
+  if (!delta || Math.abs(w) < 1e-6) return base;
+  const o = { ...base, A: base.A.slice(), t: [base.t[0], base.t[1]], op: base.op };
+  if (delta.dt) { o.t[0] += (delta.dt[0] || 0) * w; o.t[1] += (delta.dt[1] || 0) * w; }
+  const dRot = (delta.dRot || 0) * w * Math.PI / 180;
+  const dSx = Math.max(0.05, 1 + ((delta.dScale && delta.dScale[0]) || 0) * w);
+  const dSy = Math.max(0.05, 1 + ((delta.dScale && delta.dScale[1]) || 0) * w);
+  if (Math.abs(dRot) > 1e-5 || Math.abs(dSx - 1) > 1e-5 || Math.abs(dSy - 1) > 1e-5) {
+    const co = Math.cos(dRot), si = Math.sin(dRot);
+    const m0 = co * dSx, m1 = -si * dSy, m2 = si * dSx, m3 = co * dSy, A = o.A;
+    o.A = [m0 * A[0] + m1 * A[2], m0 * A[1] + m1 * A[3], m2 * A[0] + m3 * A[2], m2 * A[1] + m3 * A[3]];
+  }
+  if (delta.dOp) o.op = Math.max(0, Math.min(1, o.op + delta.dOp * w));
+  if (delta.F && delta.F.length) o.F = addScaledGrid(o.F, delta.F, w);
+  return o;
+}
+function pitchAt(pitch) {
+  const PS = P && P.pitchSamples;
+  if (!PS || !PS.length) return null;
+  const pVal = Math.max(-1, Math.min(1, pitch || 0));
+  if (PS.length === 1) return PS[0].layers || null;
+  let i = 0; while (i + 1 < PS.length && PS[i + 1].pitch < pVal) i++;
+  const s0 = PS[i], s1 = PS[Math.min(i + 1, PS.length - 1)];
+  if (s0 === s1 || s1.pitch === s0.pitch) return s0.layers || null;
+  const f = Math.max(0, Math.min(1, (pVal - s0.pitch) / (s1.pitch - s0.pitch)));
+  const L0 = s0.layers || {}, L1 = s1.layers || {}, ids = new Set([...Object.keys(L0), ...Object.keys(L1)]);
+  if (!ids.size) return null;
+  const out = Object.create(null);
+  for (const id of ids) {
+    const a = L0[id] || {}, b = L1[id] || {}, dt0 = a.dt || [0, 0], dt1 = b.dt || [0, 0], ds0 = a.dScale || [0, 0], ds1 = b.dScale || [0, 0];
+    out[id] = {
+      dt: [lerp(dt0[0] || 0, dt1[0] || 0, f), lerp(dt0[1] || 0, dt1[1] || 0, f)],
+      dRot: lerp(a.dRot || 0, b.dRot || 0, f),
+      dScale: [lerp(ds0[0] || 0, ds1[0] || 0, f), lerp(ds0[1] || 0, ds1[1] || 0, f)],
+      dOp: lerp(a.dOp || 0, b.dOp || 0, f),
+      F: lerpGrids(a.F, b.F, f),
+    };
+  }
+  return out;
+}
+function applyPitchAndBlend(key, f, fc) {
+  const pitchD = pitchAt(f.pitch || 0);
+  const BS = (P && P.blendShapes) || [];
+  let bw = null;
+  if (BS.length) {
+    const fb = (fc && fc.blend) || {};
+    for (const bs of BS) {
+      const lo = bs.min ?? 0, hi = bs.max ?? 1;
+      let w = (bs.default ?? 0) + (fb[bs.id] || 0);
+      if (bs.bind === "mouthOpen") w += ctl.vowel ? 1 : 0;
+      else if (bs.bind === "eyeOpen") w += Math.max(0, Math.min(1, 1 - (ctl.eyes ?? 1)));
+      else if (bs.bind === "breath") w += (f.breath || 1) - 1;
+      else if (bs.bind === "angleX") w += f.a || 0;
+      else if (bs.bind === "angleY") w += f.pitch || 0;
+      else if (bs.bind === "angleZ") w += Math.max(-1, Math.min(1, (f.roll || 0) / 0.35));
+      w = Math.max(lo, Math.min(hi, w));
+      if (Math.abs(w) > 1e-5) { (bw ||= Object.create(null))[bs.id] = w; }
+    }
+  }
+  if (!pitchD && !bw) return;
+  for (let i = 0; i < P.layers.length; i++) {
+    const id = P.layers[i].id;
+    let cur = key.layers[i];
+    if (pitchD && pitchD[id]) cur = applyLayerDelta(cur, pitchD[id], 1.0);
+    if (bw) {
+      for (const bs of BS) {
+        const w = bw[bs.id];
+        if (w && bs.layers && bs.layers[id]) cur = applyLayerDelta(cur, bs.layers[id], w);
+      }
+    }
+    key.layers[i] = cur;
+  }
+}
 function keyAt(a) {
   const n = P.samples.length - 1, k = Math.min(n - 1e-6, Math.max(0, (a + 1) / 2 * n)), i = Math.floor(k), f = k - i;
-  const s0 = P.samples[i], s1 = P.samples[i + 1];
+  const s0 = P.samples[i], s1 = P.samples[Math.min(i + 1, n)];
   const layers = s0.layers.map((l0, j) => {
-    const l1 = s1.layers[j], o = { A: lerpArr(l0.A, l1.A, f), t: lerpArr(l0.t, l1.t, f), op: lerp(l0.op, l1.op, f) };
-    if (l0.D) o.D = lerpArr(l0.D, l1.D, f);
-    if (l0.hole !== undefined) o.hole = lerp(l0.hole, l1.hole, f);
-    if (l0.wipe !== undefined) o.wipe = lerp(l0.wipe, l1.wipe, f);
-    if (l0.turn !== undefined) o.turn = lerp(l0.turn, l1.turn, f);
-    if (l0.behind !== undefined) o.behind = lerp(l0.behind, l1.behind, f) >= 0.5 ? 1 : 0;
-    if (l0.cut !== undefined) { o.cut = lerp(l0.cut, l1.cut, f); o.slide = lerpArr(l0.slide, l1.slide, f); }
+    const l1 = s1.layers[j] || l0, o = { A: lerpArr(l0.A, l1.A, f), t: lerpArr(l0.t, l1.t, f), op: lerp(l0.op, l1.op, f) };
+    const dG = lerpGrids(l0.D, l1.D, f); if (dG) o.D = dG;
+    const fG = lerpGrids(l0.F, l1.F, f); if (fG) o.F = fG;
+    if (l0.hole !== undefined || l1.hole !== undefined) o.hole = lerp(l0.hole || 0, l1.hole || 0, f);
+    if (l0.wipe !== undefined || l1.wipe !== undefined) o.wipe = lerp(l0.wipe ?? 1, l1.wipe ?? 1, f);
+    if (l0.turn !== undefined || l1.turn !== undefined) o.turn = lerp(l0.turn || 0, l1.turn || 0, f);
+    if (l0.behind !== undefined || l1.behind !== undefined) o.behind = lerp(l0.behind || 0, l1.behind || 0, f) >= 0.5 ? 1 : 0;
+    if (l0.cut !== undefined || l1.cut !== undefined) { o.cut = lerp(l0.cut || 0, l1.cut || 0, f); if (l0.slide && l1.slide) o.slide = lerpArr(l0.slide, l1.slide, f); }
     return o;
   });
-  return { angle: lerp(s0.angle, s1.angle, f), jaw: lerp(s0.jaw, s1.jaw, f), chin: lerp(s0.chin || 0, s1.chin || 0, f),
-           chinAt: s0.chinAt ? lerpArr(s0.chinAt, s1.chinAt, f) : [0, 0], layers };
+  return { angle: lerp(s0.angle, s1.angle, f), jaw: lerp(s0.jaw || 0, s1.jaw || 0, f), chin: lerp(s0.chin || 0, s1.chin || 0, f),
+           chinAt: s0.chinAt && s1.chinAt ? lerpArr(s0.chinAt, s1.chinAt, f) : [0, 0], layers };
 }
 
 // ---- the performer and the springs (motion.drive, motion.simulate) -----------------------------------------------
@@ -1162,8 +1338,57 @@ const ctl = { auto: true, autoT0: 0, a: 0, aTarget: 0, pitch: 0, pitchTarget: 0,
               eyes: 1, vowel: null, last: null, lastF: null, raise: 0, legR: 0, legL: 0, walkAt: -1, walkStop: Infinity, calm: 0,
               head: 1, headT: 0,
               arms: { R: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 }, L: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 } } };
-const mic = { on: false, ctx: null, stream: null, analyser: null, freq: null, time: null, rms: 0, floor: 0.008, open: false, vowel: null, cand: null, candN: 0, holdUntil: 0 };
+const LIP_MODES = ["phoneme", "basic", "volume"];
+const LIP_LABELS = { phoneme: "Lip: Phoneme", basic: "Lip: Basic", volume: "Lip: Volume" };
+const LIP_MODE_KEY = "layer2d_lip_mode";
+const OBS_AUDIO_KEY = "layer2d_obs_audio";
+const OBS_DELAY_KEY = "layer2d_obs_delay_ms";
+function normalizeLipMode(v) {
+  const s = String(v || "").toLowerCase();
+  return LIP_MODES.includes(s) ? s : "phoneme";
+}
+function clampDelayMs(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, Math.min(300, Math.round(n))) : 90;
+}
+function makeLipState() {
+  return {
+    rms: 0, prevRms: 0, floor: 0.008, open: false,
+    vowel: null, phoneme: "—",
+    probs: { X: 1, A: 0, E: 0, I: 0, O: 0, U: 0 },
+    ring: [],
+    cand: null, candN: 0, holdUntil: 0,
+  };
+}
+let lipMode = (() => {
+  const qp = QP.get("lip");
+  if (qp) return normalizeLipMode(qp);
+  try { return normalizeLipMode(localStorage.getItem(LIP_MODE_KEY) || "phoneme"); } catch { return "phoneme"; }
+})();
+const mic = { on: false, ctx: null, stream: null, analyser: null, freq: null, time: null, state: makeLipState() };
 const cam = { on: false, remoteOn: false, loading: false, landmarker: null, stream: null, video: null, lastVideoT: -1, eyeOpen: [1, 1], gaze: [0, 0], vowel: null, cand: null, candN: 0 };
+const obsHost = {
+  on: false, loading: false, id: null, peer: null, conns: new Set(), calls: new Map(),
+  audioTunnel: (() => {
+    const qp = QP.get("obsaudio");
+    if (qp !== null) return qp !== "0" && qp !== "false";
+    try { const s = localStorage.getItem(OBS_AUDIO_KEY); return s === null ? true : s !== "0"; } catch { return true; }
+  })(),
+  audioDelayMs: (() => {
+    const qp = QP.get("audiodelay");
+    if (qp !== null) return clampDelayMs(qp);
+    try { const s = localStorage.getItem(OBS_DELAY_KEY); return s !== null ? clampDelayMs(s) : 90; } catch { return 90; }
+  })(),
+  lastPoseT: 0, lastVowelSent: null, lastBounceSent: -10, bgTimer: null, txSeq: 0,
+};
+const obsViewer = { on: false, id: null, peer: null, conn: null, retryTimer: null, rx: null, posesRx: 0, applyingModel: false };
+const obsAudio = {
+  active: false, tunnelExpected: false, call: null, stream: null, el: null,
+  ctx: null, src: null, analyser: null, delay: null, gain: null, freq: null, time: null,
+  delayMs: clampDelayMs(QP.get("audiodelay") ?? 90),
+  lipMode,
+  state: makeLipState(),
+};
 const camActive = () => cam.on || cam.remoteOn;
 let statusMsg = "", statusUntil = 0;
 function flashStatus(msg, secs = 2.5) {
@@ -1597,7 +1822,7 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
   const eo = F.eyes || [1, 1], ek = F.iris || 1;
   const eg = [!snap && camActive() ? eo[0] * cam.eyeOpen[0] : eo[0], !snap && camActive() ? eo[1] * cam.eyeOpen[1] : eo[1], ek, ek];
   face.eye = face.eye.map((v, j) => v + (eg[j] - v) * (camActive() && !snap ? Math.min(1, k * 2.5) : k));
-  return { hide, after, move, eyes: face.eye.slice(), gaze: snap ? lk || [0, 0] : [gaze.x, gaze.y], still: Hd ? Hd.still : [], shut,
+  return { hide, after, move, blend: F.blend || null, eyes: face.eye.slice(), gaze: snap ? lk || [0, 0] : [gaze.x, gaze.y], still: Hd ? Hd.still : [], shut,
            over: (Hd && Hd.over) || {} };
 }
 
@@ -1864,14 +2089,17 @@ function draw(f) {
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 6, LK.length, gl.RGBA, gl.FLOAT, lockRows);
   gl.uniform1i(U.uLocks, 8); gl.uniform1i(U.uLockN, LK.length); gl.uniform1f(U.uLockSigma, MM.lockSigma);
   if (CH.length) {                            // (opt-in) the chains' rows: rest joints, their moves, the count
-    CH.forEach((c, i) => { const row = chainRows.subarray(28 * i, 28 * i + 28);
+    CH.forEach((c, i) => { const row = chainRows.subarray(64 * i, 64 * i + 28);
       row.set(c.J, 0); row.set(c.d, 12); row[24] = c.n; row[25] = c.hang ? 1 : 0; });
     gl.activeTexture(gl.TEXTURE10); gl.bindTexture(gl.TEXTURE_2D, chainTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 7, CH.length, gl.RGBA, gl.FLOAT, chainRows);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 16, CH.length, gl.RGBA, gl.FLOAT, chainRows);
+  } else {
+    gl.activeTexture(gl.TEXTURE10); gl.bindTexture(gl.TEXTURE_2D, chainTex);
   }
   gl.uniform1i(U.uChains, 10); gl.uniform1i(U.uSheerTex, 9); gl.uniform1f(U.uTime, simT);
 
   const fc = f.face || faceAt(0, true), eyes = eyeState(fc.eyes, fc.gaze, fc.shut);
+  applyPitchAndBlend(key, f, fc);
   if (fc.still.length) { f = Object.assign({}, f, { lift: 0, raise: 0 });      // arms held (the puppet's too)
     for (const a of fc.still) { f[a] = f["raise" + a.slice(3)] = f["elbow" + a.slice(3)] = 0; f["armP" + a.slice(3)] = [0, 0]; } }
   if (ARM && ARM.on) f = ARM.drive(f);                          // (opt-in: posed drawn arms carry their sleeves)
@@ -1998,6 +2226,8 @@ function draw(f) {
       t = [piv[0] + m0 * dx + m1 * dy, piv[1] + m2 * dx + m3 * dy];
     }
     let spread = 1; if (k.D) { let m = 0; for (const v of k.D) m = Math.max(m, Math.abs(v)); spread += m; }
+    const hasF = isGridNonZero(k.F), gf = hasF ? gridSizeOf(k.F) : 0;
+    if (hasF) { let m = 0; for (const v of k.F) m = Math.max(m, Math.abs(v)); spread += m; }
     let corners = [[-w2, -h2], [w2, -h2], [w2, h2], [-w2, h2]], mid = t;
     if (piece) {                                                  // the piece's corners in the layer's px
       const Ri = inv2(piece.relA), cx = -(Ri[0] * piece.relT[0] + Ri[1] * piece.relT[1]);
@@ -2013,6 +2243,18 @@ function draw(f) {
       const x = (A[0] * cx + A[1] * cy) * spread + t[0], y = (A[2] * cx + A[3] * cy) * spread + t[1];
       x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
     }
+    if (hasF && !piece) {
+      const step = 2 / (gf - 1);
+      for (let iy = 0; iy < gf; iy++) {
+        const g0y = -1 + iy * step;
+        for (let ix = 0; ix < gf; ix++) {
+          const g0x = -1 + ix * step, fi = (iy * gf + ix) * 2;
+          const lx = (g0x + k.F[fi]) * w2, ly = (g0y + k.F[fi + 1]) * h2;
+          const x = A[0] * lx + A[1] * ly + t[0], y = A[2] * lx + A[3] * ly + t[1];
+          x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        }
+      }
+    }
     const px = L.pad + mg + (ey ? 40 : 0), py = mg + (L.hook ? 60 : 0) + (ey ? 40 : 0) + Math.abs(f.pitch || 0) * 90;   // fit.Rig.place's box, MotionRig.pad's margins
     gl.uniform4f(U.uBox, x0 - px, y0 - py, x1 + px, y1 + py);
     const Ai = inv2(A);
@@ -2025,7 +2267,7 @@ function draw(f) {
     gl.uniform1i(U.uAlphaOnly, alphaOnly ? 1 : 0);
     gl.uniform1i(U.uHead, L.head ? 1 : 0); gl.uniform1i(U.uJaw, L.jaw ? 1 : 0); gl.uniform1i(U.uNoFade, L.noFade ? 1 : 0);
     gl.uniform1f(U.uTurn, k.turn || 0);
-    const [pDy, pSy] = L.kind === 0 && L.head ? pitchParams(L.pitchGroup || pitchGroup(L.id), f.pitch || 0) : [0, 1];
+    const [pDy, pSy] = L.kind === 0 && L.head && !L.pitchManual ? pitchParams(L.pitchGroup || pitchGroup(L.id), f.pitch || 0) : [0, 1];
     gl.uniform1f(U.uPitch, pDy); gl.uniform1f(U.uPitchScale, pSy);
     if (L.hair !== undefined) {
       const h = MM.hair[L.hair], d = f.hair[h.name];
@@ -2100,6 +2342,17 @@ function draw(f) {
       gl.uniform1f(U.uBoreal, SKY && SKY.on && SKY.film !== null ? SKY.film : P.sheer.boreal);
       gl.activeTexture(gl.TEXTURE9); gl.bindTexture(gl.TEXTURE_2D, sheers[L.id]); }
     else gl.uniform1i(U.uSheerOn, L.sheer && piece && piece.raise !== undefined && SKY && SKY.on ? 2 : 0);   // (sheer.sky)
+    if (hasF && gf >= 2 && gf <= 15) {
+      for (let iy = 0; iy < gf; iy++) {
+        for (let ix = 0; ix < gf; ix++) {
+          const si = (iy * gf + ix) * 2, di = (iy * gf + ix) * 4;
+          fUploadBuf[di] = k.F[si]; fUploadBuf[di + 1] = k.F[si + 1]; fUploadBuf[di + 2] = 0; fUploadBuf[di + 3] = 0;
+        }
+      }
+      gl.activeTexture(gl.TEXTURE10); gl.bindTexture(gl.TEXTURE_2D, chainTex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, fBase, gf, gf, gl.RGBA, gl.FLOAT, fUploadBuf.subarray(0, gf * gf * 4));
+      gl.uniform3i(U.uFInfo, 1, gf, fBase);
+    } else gl.uniform3i(U.uFInfo, 0, 0, fBase);
     if (k.D) { const gd = Math.round(Math.sqrt(k.D.length / 2)); gl.uniform1i(U.uHasD, 1); gl.uniform1i(U.uGD, gd); gl.uniform2fv(U.uD, k.D); }
     else gl.uniform1i(U.uHasD, 0);
     if (L.hook) { gl.uniform1i(U.uHook, 1); gl.uniform3f(U.uHookV, L.hook[0], L.hook[1], f[L.id]); } else gl.uniform1i(U.uHook, 0);
@@ -2518,9 +2771,10 @@ async function start(l2dBuffer = null, l2dName = null) {
       : c.parent === "head" ? (/ear/i.test(c.name) ? "ear" : /back|bs/i.test(c.name) ? "back" : /side/i.test(c.name) ? "side" : "bangs") : "face";
     CH.push({ ...c, J: c.joints, n, len, d: new Float32Array(2 * n), pitchGroup: pg });
   });
-  chainRows = new Float32Array(28 * Math.max(1, CH.length));
+  fBase = Math.max(1, CH.length);
+  chainRows = new Float32Array(16 * 4 * fBase);
   chainTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, chainTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 7, Math.max(1, CH.length), 0, gl.RGBA, gl.FLOAT, chainRows);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 16, fBase + 16, 0, gl.RGBA, gl.FLOAT, null);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   lockTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, lockTex);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 6, nLocks, 0, gl.RGBA, gl.FLOAT, lockRows);
@@ -2624,7 +2878,9 @@ let t0 = null, simT = 0, fps = 0, frames = 0, fpsT = 0, paused = false;
 function loop(now) {
   if (paused) { loopRunning = false; return; }
   now /= 1000; if (t0 === null) { t0 = now; fpsT = now; }
-  if (mic.on) {
+  if (obsAudio.active && obsAudio.analyser) {
+    updateObsAudioLipSync(now);
+  } else if (mic.on) {
     updateMic(now);
     if (obsHost.on && obsHost.conns.size && ctl.vowel !== obsHost.lastVowelSent) sendObsPose(now, true);
   }
@@ -2675,61 +2931,385 @@ function setBg(mode) {
 }
 $("bg-btn").onclick = () => setBg(BG_CYCLE[(BG_CYCLE.indexOf(bgMode) + 1) % BG_CYCLE.length]);
 
-// ---- live Web Audio AEIOU lip-sync (Mic — low-latency direct capture + adaptive noise floor) -----------------------
-function updateMic(now) {
-  if (!mic.analyser) return;
-  mic.analyser.getFloatTimeDomainData(mic.time);
-  let sum = 0;
-  for (let i = 0; i < mic.time.length; i++) sum += mic.time[i] * mic.time[i];
-  const rms = Math.sqrt(sum / mic.time.length);
-  // Fast attack (1-frame speech onset) & crisp release (mouth closes cleanly when speech pauses)
-  mic.rms += (rms - mic.rms) * (rms > mic.rms ? 0.85 : 0.48);
-  // Adaptive ambient noise floor so raw low-latency mic audio stays rock-solid closed in quiet rooms
-  if (rms < mic.floor * 1.65) {
-    mic.floor = Math.max(0.0035, Math.min(0.035, mic.floor + (rms - mic.floor) * 0.04));
+// ---- live Web Audio Phoneme (LPC formants + consonants) / Basic / Volume lip-sync ----------------------------------
+const LPC_ORDER = 12, LPC_FS = 16000, LPC_NGRID = 96, LPC_FMIN = 200, LPC_FMAX = 3400;
+const LPC_FREQS = new Float32Array(LPC_NGRID);
+const LPC_COS = new Float32Array(LPC_NGRID * LPC_ORDER);
+const LPC_SIN = new Float32Array(LPC_NGRID * LPC_ORDER);
+for (let k = 0; k < LPC_NGRID; k++) {
+  const f = LPC_FMIN + (LPC_FMAX - LPC_FMIN) * (k / (LPC_NGRID - 1));
+  LPC_FREQS[k] = f;
+  const w = (2 * Math.PI * f) / LPC_FS;
+  for (let m = 1; m <= LPC_ORDER; m++) {
+    LPC_COS[k * LPC_ORDER + (m - 1)] = Math.cos(w * m);
+    LPC_SIN[k * LPC_ORDER + (m - 1)] = Math.sin(w * m);
   }
-  const openTh = Math.max(0.015, mic.floor * 2.4);
-  const closeTh = Math.max(0.009, mic.floor * 1.55);
-  if (mic.open ? mic.rms < closeTh : mic.rms < openTh) {
-    mic.open = false; mic.vowel = null; mic.cand = null; mic.candN = 0; ctl.vowel = null;
-    return;
+}
+// IPA vowel formant prototypes in log2(Hz): [vowel, log2(F1), log2(F2), sigma1, sigma2, ipaLabel]
+const VOWEL_PROTOS = [
+  ["A", Math.log2(750), Math.log2(1240), 0.34, 0.36, "AA"],
+  ["E", Math.log2(520), Math.log2(1920), 0.34, 0.34, "EH"],
+  ["I", Math.log2(315), Math.log2(2320), 0.36, 0.34, "IY"],
+  ["O", Math.log2(500), Math.log2(900),  0.34, 0.34, "AO"],
+  ["U", Math.log2(320), Math.log2(760),  0.36, 0.34, "UW"],
+];
+const _lpcX16 = new Float32Array(512);
+const _lpcWin = new Float32Array(512);
+const _lpcR = new Float64Array(LPC_ORDER + 1);
+const _lpcA = new Float64Array(LPC_ORDER + 1);
+const _lpcPrev = new Float64Array(LPC_ORDER + 1);
+const _lpcSpec = new Float32Array(LPC_NGRID);
+
+function extractLpcFormants(timeBuf, sampleRate) {
+  const step = Math.max(1, sampleRate / LPC_FS);
+  const n16 = Math.min(_lpcX16.length, Math.floor((timeBuf.length - 2) / step));
+  if (n16 < 48) return { f1: 550, f2: 1400, zcr16: 0, hasPeaks: false };
+  const useLP = step >= 2.0;
+  let zc = 0, prevSign = 0;
+  for (let i = 0; i < n16; i++) {
+    const pos = i * step;
+    const idx = Math.floor(pos);
+    let v;
+    if (useLP && idx >= 1 && idx + 1 < timeBuf.length) {
+      v = 0.25 * timeBuf[idx - 1] + 0.5 * timeBuf[idx] + 0.25 * timeBuf[idx + 1];
+    } else {
+      const frac = pos - idx;
+      v = timeBuf[idx] * (1 - frac) + (timeBuf[idx + 1] || 0) * frac;
+    }
+    _lpcX16[i] = v;
+    const s = v >= 0 ? 1 : -1;
+    if (i > 0 && s !== prevSign) zc++;
+    prevSign = s;
   }
-  mic.open = true;
-  mic.analyser.getByteFrequencyData(mic.freq);
-  const binHz = (mic.ctx.sampleRate || 48000) / mic.analyser.fftSize;
+  const zcr16 = zc / Math.max(1, n16 - 1);
+  // Pre-emphasis (0.80 tilts spectrum cleanly without crushing 300 Hz /u/ & /i/ F1) + Hamming window
+  const invN = (2 * Math.PI) / (n16 - 1);
+  for (let i = 0; i < n16; i++) {
+    const pe = i > 0 ? _lpcX16[i] - 0.80 * _lpcX16[i - 1] : _lpcX16[0];
+    _lpcWin[i] = pe * (0.54 - 0.46 * Math.cos(invN * i));
+  }
+  for (let lag = 0; lag <= LPC_ORDER; lag++) {
+    let s = 0;
+    for (let i = 0; i < n16 - lag; i++) s += _lpcWin[i] * _lpcWin[i + lag];
+    _lpcR[lag] = s;
+  }
+  if (_lpcR[0] < 1e-10) return { f1: 550, f2: 1400, zcr16, hasPeaks: false };
+  _lpcR[0] *= 1.0002;
+  _lpcA.fill(0);
+  _lpcA[0] = 1;
+  let err = _lpcR[0];
+  for (let i = 1; i <= LPC_ORDER; i++) {
+    let acc = 0;
+    for (let j = 1; j < i; j++) acc += _lpcA[j] * _lpcR[i - j];
+    const k = -(_lpcR[i] + acc) / (err || 1e-12);
+    if (!Number.isFinite(k) || Math.abs(k) >= 0.998) break;
+    _lpcPrev.set(_lpcA);
+    _lpcA[i] = k;
+    for (let j = 1; j < i; j++) _lpcA[j] = _lpcPrev[j] + k * _lpcPrev[i - j];
+    err *= 1 - k * k;
+    if (err <= 1e-12) break;
+  }
+  // Evaluate smooth all-pole vocal tract log-magnitude envelope H(f) = -log|A(e^{jw})|
+  for (let k = 0; k < LPC_NGRID; k++) {
+    let re = 1.0, im = 0.0;
+    const base = k * LPC_ORDER;
+    for (let m = 1; m <= LPC_ORDER; m++) {
+      const am = _lpcA[m];
+      re += am * LPC_COS[base + (m - 1)];
+      im -= am * LPC_SIN[base + (m - 1)];
+    }
+    _lpcSpec[k] = -0.5 * Math.log(re * re + im * im + 1e-9);
+  }
+  const peaks = [];
+  for (let k = 1; k < LPC_NGRID - 1; k++) {
+    const c = _lpcSpec[k];
+    if (c > _lpcSpec[k - 1] && c >= _lpcSpec[k + 1]) {
+      const l = _lpcSpec[k - 1], r = _lpcSpec[k + 1];
+      const denom = l - 2 * c + r;
+      const shift = Math.abs(denom) > 1e-6 ? Math.max(-0.5, Math.min(0.5, 0.5 * (l - r) / denom)) : 0;
+      const df = (LPC_FMAX - LPC_FMIN) / (LPC_NGRID - 1);
+      const hz = LPC_FREQS[k] + shift * df;
+      const prom = c - 0.5 * (_lpcSpec[Math.max(0, k - 3)] + _lpcSpec[Math.min(LPC_NGRID - 1, k + 3)]);
+      peaks.push({ hz, mag: c, prom: Math.max(0, prom) });
+    }
+  }
+  let f1 = 550, f2 = 1400, hasPeaks = false;
+  // Rank vocal-tract peaks by prominence+magnitude, keep the strongest formants, then order by frequency ascending
+  // so F1 is always the lowest significant oral resonance (230..960 Hz) and F2 is the next resonance (650..2750 Hz) —
+  // never letting pre-emphasized F2 steal F1 on back-rounded vowels (/o/, /u/)!
+  const vocalPeaks = peaks.filter((p) => p.hz >= 230 && p.hz <= 2750);
+  if (vocalPeaks.length) {
+    const scored = vocalPeaks.map((p) => ({ ...p, sc: p.mag + p.prom * 1.4 }));
+    scored.sort((a, b) => b.sc - a.sc);
+    const topMag = scored[0].sc;
+    // Keep top formants within 4.5 log-units of the strongest resonance, sorted low->high frequency
+    const sig = scored.filter((p, idx) => idx < 4 && p.sc >= topMag - 4.5).sort((a, b) => a.hz - b.hz);
+    const p1 = sig.find((p) => p.hz >= 230 && p.hz <= 960) || scored.find((p) => p.hz >= 230 && p.hz <= 960);
+    if (p1) { f1 = p1.hz; hasPeaks = true; }
+    const f2Min = Math.max(f1 + 190, 650);
+    const p2Sig = sig.filter((p) => p.hz >= f2Min && p.hz <= 2750);
+    if (p2Sig.length) {
+      p2Sig.sort((a, b) => b.sc - a.sc);
+      f2 = p2Sig[0].hz;
+      hasPeaks = true;
+    } else {
+      const p2Any = scored.find((p) => p.hz >= f2Min && p.hz <= 2750);
+      if (p2Any) { f2 = p2Any.hz; hasPeaks = true; }
+    }
+  }
+  return { f1, f2, zcr16, hasPeaks };
+}
+
+function bandEnergyFromFreq(freqBuf, sampleRate, fftSize) {
+  const binHz = sampleRate / fftSize;
   const band = (lo, hi) => {
-    const i0 = Math.max(1, Math.floor(lo / binHz)), i1 = Math.min(mic.freq.length - 1, Math.ceil(hi / binHz));
+    const i0 = Math.max(1, Math.floor(lo / binHz)), i1 = Math.min(freqBuf.length - 1, Math.ceil(hi / binHz));
     let a = 0, c = 0;
-    for (let i = i0; i <= i1; i++) { a += mic.freq[i]; c++; }
+    for (let i = i0; i <= i1; i++) { a += freqBuf[i]; c++; }
     return c ? a / c : 0;
   };
-  const low = band(150, 600), mid = band(600, 1600), high = band(1600, 4000), tot = low + mid + high + 1e-6;
-  const rL = low / tot, rM = mid / tot, rH = high / tot;
-  let v = "A";
-  if (rL > 0.56 && rH < 0.16) v = "U";
-  else if (rL > 0.42 && rM > 0.24 && rH < 0.22) v = "O";
-  else if (rH > 0.30 && rH > rM * 0.85) v = "I";
-  else if (rH > 0.21 && rM > 0.26) v = "E";
-  else if (mic.rms < 0.045 && rL > 0.44) v = "O";
-  if (v === mic.cand) mic.candN++; else { mic.cand = v; mic.candN = 1; }
-  if (!mic.vowel || (now >= mic.holdUntil && (mic.candN >= 1))) {
-    mic.vowel = v; mic.holdUntil = now + 0.032;
+  let num = 0, den = 0;
+  const c0 = Math.max(1, Math.floor(150 / binHz)), c1 = Math.min(freqBuf.length - 1, Math.ceil(7500 / binHz));
+  for (let i = c0; i <= c1; i++) { const m = freqBuf[i]; num += m * i * binHz; den += m; }
+  return {
+    eSub: band(80, 300),
+    eLow: band(300, 850),
+    eMid: band(850, 2100),
+    eHi: band(2100, 3800),
+    eSib: band(3800, 7500),
+    lowB: band(150, 600),
+    midB: band(600, 1600),
+    hiB: band(1600, 4000),
+    centroidHz: den > 1e-3 ? num / den : 1000,
+  };
+}
+
+function bandEnergyFromTime(timeBuf, sampleRate) {
+  // Fast Goertzel probe across key acoustic bands when called without an AnalyserNode FFT buffer
+  const n = Math.min(timeBuf.length, 512);
+  const goertzel = (hz) => {
+    if (hz >= sampleRate * 0.48) return 0;
+    const w = (2 * Math.PI * hz) / sampleRate, coeff = 2 * Math.cos(w);
+    let s1 = 0, s2 = 0;
+    for (let i = 0; i < n; i++) { const s0 = timeBuf[i] + coeff * s1 - s2; s2 = s1; s1 = s0; }
+    return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - coeff * s1 * s2)) / n * 480;
+  };
+  const avg = (freqs) => freqs.reduce((a, f) => a + goertzel(f), 0) / freqs.length;
+  const eSub = avg([140, 210, 270]);
+  const eLow = avg([340, 500, 740]);
+  const eMid = avg([920, 1260, 1650, 1950]);
+  const eHi = avg([2250, 2750, 3300]);
+  const eSib = avg([4200, 5400, 6600]);
+  const tot = eSub + eLow + eMid + eHi + eSib + 1e-6;
+  const centroidHz = (eSub * 210 + eLow * 540 + eMid * 1450 + eHi * 2800 + eSib * 5400) / tot;
+  return { eSub, eLow, eMid, eHi, eSib, lowB: (eSub + eLow) * 0.5, midB: (eLow + eMid) * 0.5, hiB: (eHi + eSib * 0.5) * 0.67, centroidHz };
+}
+
+function classifyPhonemeFrame(timeBuf, freqBuf, sampleRate, rms, open) {
+  if (!open) {
+    return { probs: { X: 1, A: 0, E: 0, I: 0, O: 0, U: 0 }, vowel: null, label: "—", f1: 0, f2: 0, zcr16: 0 };
   }
-  ctl.vowel = mic.vowel;
+  const bands = freqBuf ? bandEnergyFromFreq(freqBuf, sampleRate, timeBuf.length) : bandEnergyFromTime(timeBuf, sampleRate);
+  const { f1, f2, zcr16 } = extractLpcFormants(timeBuf, sampleRate);
+  const oralSum = bands.eMid + bands.eHi + bands.eSib;
+  const voicedSum = bands.eSub + bands.eLow + bands.eMid + 1e-4;
+  const scores = { X: -3.2, A: -2.0, E: -2.0, I: -2.0, O: -2.0, U: -2.0 };
+  let consonantLabel = null;
+
+  // 1. Bilabial / Nasal closure (/m, n, b, p/) — lips shut: energy locked in 80-300 Hz voice bar, oral bands absent!
+  if (zcr16 < 0.085 && bands.eSub > 18 && bands.eLow < bands.eSub * 0.45 && oralSum < bands.eSub * 0.35) {
+    scores.X = 2.6;
+    consonantLabel = "M/B/P";
+  }
+  // 2. Unvoiced Sibilants (/s, z, sh, ch/) — strong high-frequency turbulence & high ZCR
+  else if (zcr16 > 0.25 && (bands.eSib > Math.max(bands.eLow, bands.eSub) * 0.65 || bands.centroidHz > 2650)) {
+    scores.I = 2.5; scores.E = 0.6;
+    consonantLabel = "S/SH";
+  }
+  // 3. Labiodental / Dental Fricatives (/f, v, th/) — moderate-high ZCR, broad high spectrum
+  else if (zcr16 > 0.17 && (bands.eHi + bands.eSib) > voicedSum * 0.62) {
+    scores.E = 2.2; scores.I = 0.8;
+    consonantLabel = "F/V";
+  }
+  // 4. Voiced IPA Vowel Formant Gaussians in log2(F1, F2) space
+  const lf1 = Math.log2(Math.max(180, f1));
+  const lf2 = Math.log2(Math.max(450, f2));
+  const totB = bands.eLow + bands.eMid + bands.eHi + 1e-4;
+  const rHi = bands.eHi / totB, rLow = (bands.eSub + bands.eLow) / (totB + bands.eSub + 1e-4);
+  for (const [v, m1, m2, s1, s2] of VOWEL_PROTOS) {
+    const d1 = (lf1 - m1) / s1, d2 = (lf2 - m2) / s2;
+    let sc = -0.5 * (d1 * d1 + d2 * d2);
+    if (v === "I" && rHi > 0.34) sc += 0.35;
+    if (v === "E" && rHi > 0.22 && bands.eMid > bands.eSub * 0.7) sc += 0.22;
+    if ((v === "U" || v === "O") && rLow > 0.62 && rHi < 0.18) sc += 0.28;
+    if (v === "A" && f1 > 620 && bands.eMid > bands.eHi) sc += 0.25;
+    if (!consonantLabel) scores[v] = sc;
+    else scores[v] = Math.max(scores[v], sc - 1.4);
+  }
+  // Softmax to posterior probabilities
+  let maxS = -Infinity;
+  for (const k in scores) if (scores[k] > maxS) maxS = scores[k];
+  let sumExp = 0;
+  const probs = {};
+  for (const k in scores) { probs[k] = Math.exp(Math.max(-14, (scores[k] - maxS) * 1.45)); sumExp += probs[k]; }
+  for (const k in probs) probs[k] /= sumExp;
+  let bestK = "A", bestP = -1;
+  for (const k in probs) if (probs[k] > bestP) { bestP = probs[k]; bestK = k; }
+  const vowel = bestK === "X" ? null : bestK;
+  const label = consonantLabel || (bestK === "X" ? "M/B/P" : (VOWEL_PROTOS.find((p) => p[0] === bestK)?.[5] || bestK));
+  return { probs, vowel, label, f1: Math.round(f1), f2: Math.round(f2), zcr16: +zcr16.toFixed(3) };
+}
+window.__classifyPhonemeFrame = (timeArr, sampleRate = 48000, freqArr = null) => {
+  const tb = timeArr instanceof Float32Array ? timeArr : Float32Array.from(timeArr);
+  let sum = 0; for (let i = 0; i < tb.length; i++) sum += tb[i] * tb[i];
+  const rms = Math.sqrt(sum / Math.max(1, tb.length));
+  return classifyPhonemeFrame(tb, freqArr, sampleRate, rms, rms >= 0.012);
+};
+
+function analyzeAudioLipSync(analyser, timeBuf, freqBuf, sampleRate, st, mode, now, lookaheadSec = 0) {
+  analyser.getFloatTimeDomainData(timeBuf);
+  let sum = 0;
+  for (let i = 0; i < timeBuf.length; i++) sum += timeBuf[i] * timeBuf[i];
+  const rms = Math.sqrt(sum / timeBuf.length);
+  st.prevRms = st.rms;
+  st.rms += (rms - st.rms) * (rms > st.rms ? 0.85 : 0.45);
+  if (rms < st.floor * 1.65) {
+    st.floor = Math.max(0.0035, Math.min(0.032, st.floor + (rms - st.floor) * 0.04));
+  }
+  const openTh = Math.max(0.014, st.floor * 2.35);
+  const closeTh = Math.max(0.0085, st.floor * 1.5);
+  const isOpen = st.open ? st.rms >= closeTh : st.rms >= openTh;
+  st.open = isOpen;
+
+  if (mode === "volume") {
+    if (!isOpen) { st.vowel = null; st.phoneme = "—"; return null; }
+    st.vowel = st.rms > openTh * 2.6 ? "A" : "O";
+    st.phoneme = st.vowel;
+    return st.vowel;
+  }
+
+  analyser.getByteFrequencyData(freqBuf);
+  if (mode === "basic") {
+    if (!isOpen) { st.vowel = null; st.phoneme = "—"; st.cand = null; st.candN = 0; return null; }
+    const b = bandEnergyFromFreq(freqBuf, sampleRate, analyser.fftSize);
+    const tot = b.lowB + b.midB + b.hiB + 1e-6;
+    const rL = b.lowB / tot, rM = b.midB / tot, rH = b.hiB / tot;
+    let v = "A";
+    if (rL > 0.56 && rH < 0.16) v = "U";
+    else if (rL > 0.42 && rM > 0.24 && rH < 0.22) v = "O";
+    else if (rH > 0.30 && rH > rM * 0.85) v = "I";
+    else if (rH > 0.21 && rM > 0.26) v = "E";
+    else if (st.rms < 0.045 && rL > 0.44) v = "O";
+    if (v === st.cand) st.candN++; else { st.cand = v; st.candN = 1; }
+    if (!st.vowel || (now >= st.holdUntil && st.candN >= 1)) {
+      st.vowel = v; st.holdUntil = now + 0.032;
+    }
+    st.phoneme = st.vowel || "—";
+    return st.vowel;
+  }
+
+  // Phoneme mode (LPC formants + consonants + optional non-causal look-ahead synced to OBS DelayNode!)
+  const res = classifyPhonemeFrame(timeBuf, freqBuf, sampleRate, st.rms, isOpen);
+
+  if (lookaheadSec >= 0.04) {
+    // Non-causal look-ahead buffer: we already have future audio sitting inside OBS's DelayNode!
+    st.ring.push({ t: now, probs: res.probs, rms: st.rms, open: isOpen, label: res.label });
+    while (st.ring.length && now - st.ring[0].t > 0.65) st.ring.shift();
+    // Compensate ~25 ms WebGL2 + OBS Browser Source frame pipeline lead
+    const playT = now - Math.max(0, lookaheadSec - 0.025);
+    const acc = { X: 0, A: 0, E: 0, I: 0, O: 0, U: 0 };
+    let wSum = 0, nearLabel = "—", nearDt = Infinity, playRms = 0, futurePeakRms = 0;
+    for (let i = 0; i < st.ring.length; i++) {
+      const it = st.ring[i];
+      const dt = it.t - playT;
+      if (Math.abs(dt) < nearDt) { nearDt = Math.abs(dt); nearLabel = it.label; playRms = it.rms; }
+      if (dt > 0.012 && dt <= 0.065 && it.rms > futurePeakRms) futurePeakRms = it.rms;
+      if (dt >= -0.034 && dt <= 0.044) {
+        const w = 1 - Math.abs(dt) / 0.046;
+        if (w > 0) {
+          for (const k in acc) acc[k] += it.probs[k] * w;
+          wSum += w;
+        }
+      }
+    }
+    if (wSum > 0) {
+      for (const k in acc) acc[k] /= wSum;
+      // Rhubarb-style plosive/bilabial anticipation: brief closure dip right before a sharp burst
+      if (playRms < openTh * 1.15 && futurePeakRms > openTh * 2.4) {
+        acc.X += 0.45;
+        nearLabel = "M/B/P";
+      }
+      let bestK = "X", bestP = -1;
+      for (const k in acc) if (acc[k] > bestP) { bestP = acc[k]; bestK = k; }
+      st.vowel = bestK === "X" ? null : bestK;
+      st.phoneme = bestK === "X" ? (nearLabel === "M/B/P" ? "M/B/P" : "—") : nearLabel;
+      return st.vowel;
+    }
+  }
+
+  // Causal low-latency mode (standalone browser or 0ms delay)
+  const alpha = (!isOpen || !st.vowel) ? 0.68 : 0.46;
+  for (const k in st.probs) st.probs[k] += (res.probs[k] - st.probs[k]) * alpha;
+  let bestK = "X", bestP = -1;
+  for (const k in st.probs) if (st.probs[k] > bestP) { bestP = st.probs[k]; bestK = k; }
+  const nextV = bestK === "X" ? null : bestK;
+  if (nextV === null) {
+    if (!isOpen || st.probs.X > 0.52) { st.vowel = null; st.phoneme = res.label === "M/B/P" ? "M/B/P" : "—"; }
+  } else if (!st.vowel || now >= st.holdUntil) {
+    st.vowel = nextV;
+    st.holdUntil = now + 0.028;
+    st.phoneme = res.label;
+  }
+  return st.vowel;
+}
+
+function updatePhonemePill(st, active) {
+  const pill = $("phoneme-pill");
+  if (!pill) return;
+  pill.hidden = !active;
+  if (!active) return;
+  const v = st.vowel || "·";
+  pill.textContent = st.phoneme && st.phoneme !== "—" && st.phoneme !== v ? `${st.phoneme} → ${v}` : v;
+}
+function setLipMode(mode, save = true) {
+  lipMode = normalizeLipMode(mode);
+  const btn = $("lip-mode");
+  if (btn) {
+    btn.textContent = LIP_LABELS[lipMode];
+    press(btn, lipMode === "phoneme");
+  }
+  if (save) { try { localStorage.setItem(LIP_MODE_KEY, lipMode); } catch {} }
+  if (obsHost.on) sendObsAudioConfig();
+}
+if ($("lip-mode")) {
+  setLipMode(lipMode, false);
+  $("lip-mode").onclick = () => {
+    const next = LIP_MODES[(LIP_MODES.indexOf(lipMode) + 1) % LIP_MODES.length];
+    setLipMode(next, true);
+    flashStatus(`lip-sync mode: ${next}`);
+  };
+}
+function updateMic(now) {
+  if (!mic.analyser) return;
+  ctl.vowel = analyzeAudioLipSync(mic.analyser, mic.time, mic.freq, mic.ctx.sampleRate || 48000, mic.state, lipMode, now, 0);
+  updatePhonemePill(mic.state, true);
 }
 function stopMic() {
-  mic.on = false; mic.open = false; mic.vowel = null; mic.cand = null; mic.candN = 0; mic.rms = 0; mic.floor = 0.008;
+  mic.on = false;
+  mic.state = makeLipState();
   if (mic.stream) { for (const t of mic.stream.getTracks()) t.stop(); mic.stream = null; }
   if (mic.ctx) { mic.ctx.close().catch(() => {}); mic.ctx = null; }
   mic.analyser = null;
   ctl.vowel = cam.on ? cam.vowel : null;
   press($("mic"), false);
+  updatePhonemePill(mic.state, false);
+  if (obsHost.on) syncObsAudioCalls();
 }
 async function toggleMic() {
   if (mic.on) return stopMic();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return flashStatus("mic unsupported");
   try {
-    // Disable browser AEC/NS/AGC DSP buffering (~60-110ms lag!) — we only analyze vowels locally with an adaptive noise gate!
+    // Disable browser AEC/NS/AGC DSP buffering (~60-110ms lag!) — clean raw voice for LPC phoneme analysis & OBS audio tunnel!
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1, latency: 0 },
     });
@@ -2737,11 +3317,13 @@ async function toggleMic() {
     const ctx = new AC({ latencyHint: "interactive" });
     if (ctx.state === "suspended") await ctx.resume();
     const src = ctx.createMediaStreamSource(stream), analyser = ctx.createAnalyser();
-    analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.22;
+    analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.18;
     src.connect(analyser);
-    Object.assign(mic, { on: true, ctx, stream, analyser, freq: new Uint8Array(analyser.frequencyBinCount), time: new Float32Array(analyser.fftSize), rms: 0, floor: 0.008, open: false, vowel: null, cand: null, candN: 0, holdUntil: 0 });
+    Object.assign(mic, { on: true, ctx, stream, analyser, freq: new Uint8Array(analyser.frequencyBinCount), time: new Float32Array(analyser.fftSize), state: makeLipState() });
     press($("mic"), true);
-    flashStatus("mic lip-sync on (low-latency)");
+    updatePhonemePill(mic.state, true);
+    if (obsHost.on) syncObsAudioCalls();
+    flashStatus(obsHost.on && obsHost.audioTunnel ? `mic on (${lipMode} + OBS audio tunnel)` : `mic lip-sync on (${lipMode})`);
   } catch (e) {
     stopMic();
     flashStatus("mic denied");
@@ -3049,26 +3631,203 @@ function getObsLinkUrl(id) {
   u.searchParams.set("link", id);
   return u.toString();
 }
-const obsHost = { on: false, loading: false, id: null, peer: null, conns: new Set(), lastPoseT: 0, lastVowelSent: null, lastBounceSent: -10, bgTimer: null, txSeq: 0 };
-const obsViewer = { on: false, id: null, peer: null, conn: null, retryTimer: null, rx: null, posesRx: 0, applyingModel: false };
 window.__obsLinkState = () => ({
   role: LINK_ID ? "viewer" : (obsHost.on ? "host" : "off"),
   linkId: LINK_ID || obsHost.id || null,
   hostOpen: Boolean(obsHost.peer && obsHost.peer.open),
   conns: obsHost.conns.size,
+  audioCalls: obsHost.calls.size,
+  audioTunnel: obsHost.audioTunnel,
+  audioTunnelActive: obsAudio.active,
+  audioDelayMs: (obsAudio.active || LINK_ID) ? obsAudio.delayMs : obsHost.audioDelayMs,
+  lipMode: (obsAudio.active || LINK_ID) ? obsAudio.lipMode : lipMode,
+  phoneme: obsAudio.active ? obsAudio.state.phoneme : mic.state.phoneme,
+  vowel: ctl.vowel,
+  obsAudioCtxState: obsAudio.ctx ? obsAudio.ctx.state : null,
   viewerConnected: Boolean(obsViewer.conn && obsViewer.conn.open),
   modelHash: currentL2D.hash,
   modelName: currentL2D.name,
   posesRx: obsViewer.posesRx,
 });
 function updateObsLinkUi() {
-  const btn = $("obs-link"), cp = $("copy-obs");
+  const btn = $("obs-link"), cp = $("copy-obs"), au = $("obs-audio"), sw = $("obs-sync-wrap"), dl = $("obs-delay"), dv = $("obs-delay-val");
   if (btn) {
     press(btn, obsHost.on || obsHost.loading);
     btn.textContent = obsHost.loading ? "OBS Link…" : (obsHost.on ? (obsHost.conns.size ? `OBS Link (${obsHost.conns.size})` : "OBS Link: ON") : "OBS Link");
   }
   if (cp) cp.hidden = !obsHost.on;
+  if (au) {
+    au.hidden = !obsHost.on;
+    press(au, obsHost.audioTunnel);
+    au.textContent = obsHost.audioTunnel ? (obsHost.calls.size ? "OBS Audio: LIVE" : "OBS Audio: ON") : "OBS Audio: OFF";
+  }
+  if (sw) sw.hidden = !(obsHost.on && obsHost.audioTunnel);
+  if (dl && Number(dl.value) !== obsHost.audioDelayMs) dl.value = String(obsHost.audioDelayMs);
+  if (dv) dv.textContent = `${obsHost.audioDelayMs}ms`;
 }
+function tuneOpusSdp(sdp) {
+  if (!sdp || typeof sdp !== "string") return sdp;
+  // Disable Opus DTX silence clipping & use clean 128 kbps mono voice for OBS Broadcast audio
+  return sdp.replace(/(a=fmtp:\d+\s+minptime=\d+[^\r\n]*)/g, (m) => {
+    let out = m;
+    if (!/usedtx=/i.test(out)) out += ";usedtx=0";
+    if (!/maxaveragebitrate=/i.test(out)) out += ";maxaveragebitrate=128000";
+    return out;
+  });
+}
+function sendObsAudioConfig(targetConn = null) {
+  if (!obsHost.on) return;
+  const pkt = {
+    t: "audio-cfg",
+    tunnel: Boolean(obsHost.audioTunnel && mic.on && mic.stream),
+    delayMs: obsHost.audioDelayMs,
+    lipMode,
+  };
+  const targets = targetConn ? [targetConn] : Array.from(obsHost.conns);
+  for (const conn of targets) {
+    if (conn && conn.open) {
+      try { conn.send(pkt); } catch {}
+    }
+  }
+}
+function closeObsAudioCall(peerId) {
+  const call = obsHost.calls.get(peerId);
+  if (!call) return;
+  obsHost.calls.delete(peerId);
+  try { call.close(); } catch {}
+}
+function syncObsAudioCalls() {
+  const wantStream = Boolean(obsHost.on && obsHost.peer && !obsHost.peer.destroyed && obsHost.audioTunnel && mic.on && mic.stream);
+  if (!wantStream) {
+    for (const pid of Array.from(obsHost.calls.keys())) closeObsAudioCall(pid);
+    sendObsAudioConfig();
+    updateObsLinkUi();
+    return;
+  }
+  const activePeers = new Set();
+  for (const conn of obsHost.conns) {
+    if (!conn.open) continue;
+    const pid = conn.peer;
+    activePeers.add(pid);
+    const existing = obsHost.calls.get(pid);
+    if (!existing) {
+      try {
+        const call = obsHost.peer.call(pid, mic.stream, {
+          metadata: { type: "obs-audio", delayMs: obsHost.audioDelayMs, lipMode },
+          sdpTransform: tuneOpusSdp,
+        });
+        if (call) {
+          obsHost.calls.set(pid, call);
+          const onEnd = () => {
+            if (obsHost.calls.get(pid) === call) {
+              obsHost.calls.delete(pid);
+              updateObsLinkUi();
+            }
+          };
+          call.on("close", onEnd);
+          call.on("error", onEnd);
+        }
+      } catch (e) {
+        console.warn("OBS audio call failed:", e);
+      }
+    }
+    sendObsAudioConfig(conn);
+  }
+  for (const pid of Array.from(obsHost.calls.keys())) {
+    if (!activePeers.has(pid)) closeObsAudioCall(pid);
+  }
+  updateObsLinkUi();
+}
+function detachObsAudio() {
+  obsAudio.active = false;
+  obsAudio.state = makeLipState();
+  if (obsAudio.call) { const c = obsAudio.call; obsAudio.call = null; try { c.close(); } catch {} }
+  if (obsAudio.src) { try { obsAudio.src.disconnect(); } catch {} obsAudio.src = null; }
+  if (obsAudio.delay) { try { obsAudio.delay.disconnect(); } catch {} obsAudio.delay = null; }
+  if (obsAudio.gain) { try { obsAudio.gain.disconnect(); } catch {} obsAudio.gain = null; }
+  obsAudio.analyser = null;
+  if (obsAudio.ctx) { const c = obsAudio.ctx; obsAudio.ctx = null; c.close().catch(() => {}); }
+  if (obsAudio.el) { try { obsAudio.el.pause(); obsAudio.el.srcObject = null; } catch {} }
+  obsAudio.stream = null;
+  if (!mic.on && !cam.on) ctl.vowel = null;
+}
+function setObsAudioDelay(ms) {
+  obsAudio.delayMs = clampDelayMs(ms);
+  if (obsAudio.delay && obsAudio.ctx) {
+    try { obsAudio.delay.delayTime.setTargetAtTime(obsAudio.delayMs / 1000, obsAudio.ctx.currentTime, 0.02); }
+    catch { obsAudio.delay.delayTime.value = obsAudio.delayMs / 1000; }
+  }
+}
+function attachObsAudioStream(stream) {
+  if (!stream) return;
+  // Keep any active call reference, rebuild Web Audio graph cleanly on the fresh MediaStream
+  const keepCall = obsAudio.call;
+  obsAudio.call = null;
+  detachObsAudio();
+  obsAudio.call = keepCall;
+  obsAudio.stream = stream;
+  // Chromium / OBS CEF crbug 121673 workaround: attach remote WebRTC stream to a muted <audio> element
+  // so the media pipeline actively pumps samples into AudioContext.createMediaStreamSource().
+  if (!obsAudio.el) {
+    const el = document.createElement("audio");
+    el.autoplay = true; el.playsInline = true; el.muted = true; el.hidden = true;
+    document.body.appendChild(el);
+    obsAudio.el = el;
+  }
+  obsAudio.el.muted = true;
+  obsAudio.el.srcObject = stream;
+  obsAudio.el.play().catch(() => {});
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC({ latencyHint: "interactive" });
+    const src = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.18;
+    const delay = ctx.createDelay(1.0);
+    delay.delayTime.value = obsAudio.delayMs / 1000;
+    const gain = ctx.createGain();
+    gain.gain.value = 1.0;
+    // Branch 1: zero-delay analysis BEFORE DelayNode (feeds look-ahead phoneme buffer!)
+    src.connect(analyser);
+    // Branch 2: delayed playback -> OBS Browser Source audio ("Control audio via OBS")
+    src.connect(delay);
+    delay.connect(gain);
+    gain.connect(ctx.destination);
+    Object.assign(obsAudio, {
+      active: true, ctx, src, analyser, delay, gain,
+      freq: new Uint8Array(analyser.frequencyBinCount),
+      time: new Float32Array(analyser.fftSize),
+      state: makeLipState(),
+    });
+    const syncMute = () => {
+      if (!obsAudio.el || obsAudio.ctx !== ctx) return;
+      // Avoid double audio when Web Audio graph is running; fall back to unmuted <audio> only if suspended
+      obsAudio.el.muted = ctx.state === "running";
+    };
+    ctx.onstatechange = syncMute;
+    if (ctx.state === "suspended") {
+      ctx.resume().then(syncMute).catch(() => { if (obsAudio.el) obsAudio.el.muted = false; });
+      setTimeout(syncMute, 350);
+    } else {
+      syncMute();
+    }
+  } catch (e) {
+    console.warn("OBS Web Audio sync graph failed, falling back to direct audio element:", e);
+    if (obsAudio.el) obsAudio.el.muted = false;
+  }
+}
+function updateObsAudioLipSync(now) {
+  if (!obsAudio.active || !obsAudio.analyser || !obsAudio.ctx) return;
+  ctl.vowel = analyzeAudioLipSync(
+    obsAudio.analyser, obsAudio.time, obsAudio.freq,
+    obsAudio.ctx.sampleRate || 48000,
+    obsAudio.state, obsAudio.lipMode, now,
+    obsAudio.delayMs / 1000
+  );
+}
+window.__attachTestObsAudioStream = attachObsAudioStream;
+window.__detachTestObsAudio = detachObsAudio;
 function makeHelloPayload() {
   const txId = ++obsHost.txSeq;
   const size = currentL2D.buf ? currentL2D.buf.byteLength : 0;
@@ -3146,6 +3905,7 @@ function obsBroadcastModel() {
 function stopObsHost(forgetPref = true) {
   obsHost.on = false; obsHost.loading = false;
   if (obsHost.bgTimer) { clearInterval(obsHost.bgTimer); obsHost.bgTimer = null; }
+  for (const pid of Array.from(obsHost.calls.keys())) closeObsAudioCall(pid);
   for (const c of obsHost.conns) { try { c.close(); } catch {} }
   obsHost.conns.clear();
   if (obsHost.peer) { try { obsHost.peer.destroy(); } catch {} obsHost.peer = null; }
@@ -3198,12 +3958,13 @@ async function startObsHost(copyNow = false, customId = null) {
         flashStatus(`OBS connected (${obsHost.conns.size})`, 3);
         try { conn.send(makeHelloPayload()); } catch {}
         try { conn.send(buildObsPose(performance.now() / 1000)); } catch {}
+        syncObsAudioCalls();
       });
       conn.on("data", (msg) => {
         if (!msg || typeof msg !== "object") return;
         if (msg.t === "need-model") sendModelChunks(conn, msg.txId || ++obsHost.txSeq);
       });
-      const cleanup = () => { obsHost.conns.delete(conn); updateObsLinkUi(); };
+      const cleanup = () => { obsHost.conns.delete(conn); closeObsAudioCall(conn.peer); updateObsLinkUi(); };
       conn.on("close", cleanup);
       conn.on("error", cleanup);
     });
@@ -3239,7 +4000,9 @@ function applyObsPose(msg) {
   if (typeof msg.roll === "number") ctl.rollTarget = msg.roll;
   if (typeof msg.eyes === "number") ctl.eyes = msg.eyes;
   if (typeof msg.lift === "number") ctl.liftTarget = msg.lift;
-  ctl.vowel = msg.vowel || null;
+  // When tunneled WebRTC audio is active inside OBS, OBS's local pre-delay phoneme analyzer
+  // owns ctl.vowel so audio output and avatar mouth are locked to the exact same OBS frame clock!
+  if (!obsAudio.active) ctl.vowel = msg.vowel || null;
   if (Array.isArray(msg.eyeOpen) && msg.eyeOpen.length === 2) {
     cam.remoteOn = true;
     cam.eyeOpen[0] = msg.eyeOpen[0]; cam.eyeOpen[1] = msg.eyeOpen[1];
@@ -3312,6 +4075,11 @@ async function startObsViewer(linkId) {
         if (!msg || typeof msg !== "object") return;
         if (msg.t === "pose") {
           applyObsPose(msg);
+        } else if (msg.t === "audio-cfg") {
+          obsAudio.tunnelExpected = Boolean(msg.tunnel);
+          if (msg.lipMode) obsAudio.lipMode = normalizeLipMode(msg.lipMode);
+          if (typeof msg.delayMs === "number") setObsAudioDelay(msg.delayMs);
+          if (!msg.tunnel) detachObsAudio();
         } else if (msg.t === "hello") {
           if (msg.hash && msg.hash === currentL2D.hash) {
             try { conn.send({ t: "have-model", hash: currentL2D.hash }); } catch {}
@@ -3334,6 +4102,7 @@ async function startObsViewer(linkId) {
       });
       const schedRetry = () => {
         cam.remoteOn = false;
+        detachObsAudio();
         if (!obsViewer.on) return;
         if (obsViewer.retryTimer) clearTimeout(obsViewer.retryTimer);
         obsViewer.retryTimer = setTimeout(connectNow, 2500);
@@ -3341,6 +4110,25 @@ async function startObsViewer(linkId) {
       conn.on("close", schedRetry);
       conn.on("error", schedRetry);
     };
+    peer.on("call", (call) => {
+      try {
+        if (call.metadata) {
+          if (typeof call.metadata.delayMs === "number") obsAudio.delayMs = clampDelayMs(call.metadata.delayMs);
+          if (call.metadata.lipMode) obsAudio.lipMode = normalizeLipMode(call.metadata.lipMode);
+        }
+        if (obsAudio.call && obsAudio.call !== call) detachObsAudio();
+        obsAudio.call = call;
+        call.answer();
+        call.on("stream", (remoteStream) => {
+          if (obsAudio.call === call) attachObsAudioStream(remoteStream);
+        });
+        const onEnd = () => { if (obsAudio.call === call) detachObsAudio(); };
+        call.on("close", onEnd);
+        call.on("error", onEnd);
+      } catch (e) {
+        console.warn("OBS audio receive error:", e);
+      }
+    });
     peer.on("open", connectNow);
     peer.on("disconnected", () => {
       if (obsViewer.on && peer && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch {} }, 2000);
@@ -3366,6 +4154,24 @@ if ($("obs-link")) {
 }
 if ($("copy-obs")) {
   $("copy-obs").onclick = () => copyObsLinkUrl();
+}
+if ($("obs-audio")) {
+  $("obs-audio").onclick = () => {
+    obsHost.audioTunnel = !obsHost.audioTunnel;
+    try { localStorage.setItem(OBS_AUDIO_KEY, obsHost.audioTunnel ? "1" : "0"); } catch {}
+    syncObsAudioCalls();
+    flashStatus(obsHost.audioTunnel ? "OBS Audio tunnel ON — enable 'Control audio via OBS'" : "OBS Audio tunnel OFF (DataChannel lip-sync only)", 3.5);
+  };
+}
+if ($("obs-delay")) {
+  $("obs-delay").value = String(obsHost.audioDelayMs);
+  if ($("obs-delay-val")) $("obs-delay-val").textContent = `${obsHost.audioDelayMs}ms`;
+  $("obs-delay").oninput = (e) => {
+    obsHost.audioDelayMs = clampDelayMs(e.target.value);
+    if ($("obs-delay-val")) $("obs-delay-val").textContent = `${obsHost.audioDelayMs}ms`;
+    try { localStorage.setItem(OBS_DELAY_KEY, String(obsHost.audioDelayMs)); } catch {}
+    sendObsAudioConfig();
+  };
 }
 window.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o" && $("l2d-file")) {

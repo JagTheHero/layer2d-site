@@ -1,22 +1,32 @@
 /**
  * Right Inspector Dock:
- *   - Layer Tab: Layer ID, Pitch Group, Draw Order, Behind Occlusion (Off / Active Angle / All Angles), Clip Target, Head/Jaw/NoFade, Replace Texture
- *   - Transform Tab: Position X/Y, Scale X/Y, Rotation°, Opacity, Mirror Left↔Right, Interpolate, Copy to All Angles
- *   - Warp Tab: Warp Grid 3x3..11x11, Brush Mode (Push/Smooth/Restore), Radius, Strength, Smooth Grid, Reset Warp
- *   - Physics Tab: Spring Chain editor (select/add/delete/bind layer/sigma/stiffness/damping/parent/pin), Pelvis-Locked Tail editor, Live Wind/Gravity/Impulse
- *   - Expressions Tab: Expressions CRUD (Hide layers, Add/Import Flipbook FX pieces, Eyes open, Layer Move), Outfits/Toggles CRUD, Pose-Arm Holds & Vowel Mapper
- *   - Animate Mode: CLIP & PHYSICS PREVIEW with interactive Cubic Bezier Curve Editor + Easing Presets + Spring/Wind/Gravity preview sliders!
+ *   - Layer Tab: Layer ID, Pitch Group, Procedural Pitch Mode (Auto/Manual), Draw Order, Behind Occlusion, Clip Target, Transform, Warp Grid, Spring Chain
+ *   - Transform Tab: Context-aware editor for Angle X keyforms, Angle Y keyforms (with Mirror Up↔Down), AND Blend Shapes (with binding & affected layers!)
+ *   - Warp Tab: Forward Mesh 3x3..11x11, Brush Mode, Radius, Strength, Pin Border Vertices, Soft Select + Radius, Reset Selected Vertices, Smooth/Reset Target Mesh
+ *   - Physics Tab: Spring Chains, Pelvis-Locked Tail, Live Wind/Gravity/Impulse
+ *   - Expressions Tab: Expressions CRUD, Blend Shape Weights per Expression, Overlay/Flipbook FX, Vowel Mapper, Outfit Toggles
+ *   - Animate Mode: Cubic Bezier Curve Editor + Easing Presets + Physics Preview
  */
 
 import {
   decomposeAffine,
   composeAffine,
   gridSizeOf,
-  ensureGrid,
+  ensureForwardGrid,
   smoothGrid,
+  mirrorGridY,
 } from "./warp_math.js";
 
 const PITCH_GROUPS = ["face", "bangs", "side", "crown", "back", "ear", "humanEar"];
+const BLEND_BINDS = [
+  ["", "Manual / Timeline / Expr"],
+  ["mouthOpen", "Live: Mouth Open"],
+  ["eyeOpen", "Live: Eye Blink"],
+  ["breath", "Live: Breath"],
+  ["angleX", "Live: Angle X"],
+  ["angleY", "Live: Angle Y"],
+  ["angleZ", "Live: Angle Z"],
+];
 
 export class RightInspector {
   constructor(state, engine, onAction) {
@@ -39,6 +49,7 @@ export class RightInspector {
     st.on("doc:loaded", () => this.render());
     st.on("mode:changed", () => this.render());
     st.on("selection:changed", () => this.render());
+    st.on("rigTarget:changed", () => this.render());
     st.on("pack:mutated", (d) => {
       if (d?.silentInspector) return;
       if (document.activeElement && document.activeElement.type === "range" && this.bodyEl.contains(document.activeElement)) return;
@@ -85,11 +96,11 @@ export class RightInspector {
   }
 
   _refreshNumericFields() {
-    // Fast in-place update of live transform readouts during parameter scrubbing (zero DOM churn!)
     const st = this.state;
     if (st.inspectorTab !== "layer" && st.inspectorTab !== "transform") return;
+    if (st.rigTarget.type !== "yaw") return;
     const SL = st.selectedLayerIdx >= 0
-      ? (this.engine.getLiveSampleLayer(st.selectedLayerIdx, st.params, st.snapToKeyform ? st.activeSampleIdx : null) || st.getActiveSampleLayer())
+      ? (this.engine.getLiveSampleLayer(st.selectedLayerIdx, st.params, st.snapToKeyform ? st.activeSampleIdx : null, st.snapToPitch ? st.activePitchIdx : null) || st.getActiveSampleLayer())
       : null;
     if (!SL) return;
     const dec = decomposeAffine(SL.A || [1, 0, 0, 1]);
@@ -109,7 +120,27 @@ export class RightInspector {
     });
   }
 
-  /* ---------- LAYER TAB (matching studio_concept_rigging.png!) ---------- */
+  _rigTargetBanner() {
+    const st = this.state;
+    const banner = document.createElement("div");
+    banner.className = "rig-target-banner " + st.rigTarget.type;
+    const lbl = document.createElement("span");
+    lbl.className = "mono";
+    lbl.textContent = `Editing: ${st.getRigTargetLabel()}`;
+    banner.appendChild(lbl);
+    if (st.rigTarget.type !== "yaw") {
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "btn-xs";
+      back.textContent = "Angle X";
+      back.title = "Switch editing target back to Angle X keyforms";
+      back.addEventListener("click", () => st.snapToSample(st.activeSampleIdx));
+      banner.appendChild(back);
+    }
+    return banner;
+  }
+
+  /* ---------- LAYER TAB ---------- */
   _renderLayerTab() {
     const st = this.state;
     const P = st.pack;
@@ -121,9 +152,13 @@ export class RightInspector {
     }
 
     const dec = decomposeAffine(SL.A || [1, 0, 0, 1]);
-    const gd = gridSizeOf(SL.D) || st.brush.gridSize;
+    const editTgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+    const gd = gridSizeOf(editTgt?.obj?.F) || st.brush.gridSize;
     const behindMode = !L.behind ? "off" : (SL.behind >= 0.5 ? "on" : "off_angle");
     const faceId = P.layers.find((l) => /^F01|face/i.test(l.id))?.id || P.layers[0]?.id || "F01";
+
+    const g0 = this._group();
+    g0.appendChild(this._rigTargetBanner());
 
     const g1 = this._group();
     g1.append(
@@ -144,6 +179,7 @@ export class RightInspector {
         if (this.engine.alphaMaps[old]) { this.engine.alphaMaps[clean] = this.engine.alphaMaps[old]; delete this.engine.alphaMaps[old]; }
         if (P.pitchGroups && old in P.pitchGroups) { P.pitchGroups[clean] = P.pitchGroups[old]; delete P.pitchGroups[old]; }
         if (st.studio?.layers?.[old]) { st.studio.layers[clean] = st.studio.layers[old]; delete st.studio.layers[old]; }
+        st.renameLayerDeltas(old, clean);
         st.emit("pack:mutated", { structural: true });
       }),
       this._selectRow("Pitch Group", L.pitchGroup || (P.pitchGroups && P.pitchGroups[L.id]) || "face", PITCH_GROUPS.map((g) => [g, g]), (val) => {
@@ -151,6 +187,15 @@ export class RightInspector {
         L.pitchGroup = val;
         P.pitchGroups = P.pitchGroups || {};
         P.pitchGroups[L.id] = val;
+        st.emit("pack:mutated", { structural: true });
+      }),
+      this._selectRow("Angle Y Pitch", L.pitchManual ? "manual" : "auto", [
+        ["auto", "Auto Procedural + Keyforms"],
+        ["manual", "Manual Keyforms Only"],
+      ], (val) => {
+        st.pushUndo("Change Angle Y Mode");
+        if (val === "manual") L.pitchManual = true;
+        else delete L.pitchManual;
         st.emit("pack:mutated", { structural: true });
       }),
       this._numRow("Draw Order", st.selectedLayerIdx, 0, P.layers.length - 1, 1, (val) => {
@@ -189,25 +234,30 @@ export class RightInspector {
     );
 
     const g2 = this._group();
-    g2.append(
-      this._numRow("Position X", SL.t[0], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move X"); st.getActiveSampleLayer().t[0] = +v.toFixed(2); st.emit("pack:mutated"); }, "tx"),
-      this._numRow("Position Y", SL.t[1], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move Y"); st.getActiveSampleLayer().t[1] = +v.toFixed(2); st.emit("pack:mutated"); }, "ty"),
-      this._numRow("Scale X", dec.sx, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale X"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(v, d.sy, d.rotDeg); st.emit("pack:mutated"); }, "sx"),
-      this._numRow("Scale Y", dec.sy, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale Y"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, v, d.rotDeg); st.emit("pack:mutated"); }, "sy"),
-      this._numRow("Rotation", dec.rotDeg, -180, 180, 0.5, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Rotate"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, d.sy, v); st.emit("pack:mutated"); }, "rot"),
-      this._numRow("Opacity", SL.op ?? 1, 0, 1, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Opacity"); st.getActiveSampleLayer().op = Math.max(0, Math.min(1, +v.toFixed(3))); st.emit("pack:mutated"); }, "op"),
-    );
+    if (st.rigTarget.type === "yaw") {
+      g2.append(
+        this._numRow("Position X", SL.t[0], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move X"); st.getActiveSampleLayer().t[0] = +v.toFixed(2); st.emit("pack:mutated"); }, "tx"),
+        this._numRow("Position Y", SL.t[1], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move Y"); st.getActiveSampleLayer().t[1] = +v.toFixed(2); st.emit("pack:mutated"); }, "ty"),
+        this._numRow("Scale X", dec.sx, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale X"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(v, d.sy, d.rotDeg); st.emit("pack:mutated"); }, "sx"),
+        this._numRow("Scale Y", dec.sy, 0.05, 5, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Scale Y"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, v, d.rotDeg); st.emit("pack:mutated"); }, "sy"),
+        this._numRow("Rotation", dec.rotDeg, -180, 180, 0.5, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Rotate"); const sl = st.getActiveSampleLayer(); const d = decomposeAffine(sl.A); sl.A = composeAffine(d.sx, d.sy, v); st.emit("pack:mutated"); }, "rot"),
+        this._numRow("Opacity", SL.op ?? 1, 0, 1, 0.01, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Opacity"); st.getActiveSampleLayer().op = Math.max(0, Math.min(1, +v.toFixed(3))); st.emit("pack:mutated"); }, "op"),
+      );
+    } else {
+      this._appendDeltaTransformFields(g2);
+    }
 
     const g3 = this._group();
     const chainOpts = [["-1", "None"], ...(P.chains || []).map((c, ci) => [String(ci), c.name])];
     const boundChain = (L.chains && L.chains.length) ? String(L.chains[0]) : "-1";
     const chObj = boundChain !== "-1" ? P.chains[Number(boundChain)] : null;
     g3.append(
-      this._selectRow("Warp Grid", String(gd), [["3", "3x3"], ["5", "5x5"], ["7", "7x7"], ["9", "9x9"], ["11", "11x11"]], (v) => {
-        st.pushUndo("Resize Warp Grid");
+      this._selectRow("Mesh Grid", String(gd), [["3", "3x3"], ["5", "5x5"], ["7", "7x7"], ["9", "9x9"], ["11", "11x11"]], (v) => {
+        st.pushUndo("Resize Mesh Grid");
         const ng = Number(v);
         st.brush.gridSize = ng;
-        ensureGrid(SL, ng);
+        const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, true);
+        if (tgt?.obj) ensureForwardGrid(tgt.obj, ng);
         st.emit("pack:mutated");
       }),
       this._numRow("Brush Radius", st.brush.radius, 16, 400, 4, (v) => {
@@ -240,17 +290,174 @@ export class RightInspector {
     btns.append(repBtn, headBtn);
     g4.appendChild(btns);
 
-    this.bodyEl.append(g1, g2, g3, g4);
+    this.bodyEl.append(g0, g1, g2, g3, g4);
   }
 
-  /* ---------- TRANSFORM & KEYFORM TAB ---------- */
+  _appendDeltaTransformFields(group) {
+    const st = this.state;
+    const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+    const d = tgt?.obj || { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+    const dt = d.dt || [0, 0];
+    const ds = d.dScale || [0, 0];
+    const mutate = (label, fn) => {
+      st.pushUndo(label);
+      const t = st.getEditTargetForLayer(st.selectedLayerIdx, true);
+      if (!t?.obj) return;
+      fn(t.obj);
+      st.emit("pack:mutated");
+    };
+    group.append(
+      this._numRow("Delta X", dt[0] || 0, -2000, 2000, 1, (v) => mutate("Delta X", (o) => { o.dt = [+(v).toFixed(2), (o.dt && o.dt[1]) || 0]; })),
+      this._numRow("Delta Y", dt[1] || 0, -2000, 2000, 1, (v) => mutate("Delta Y", (o) => { o.dt = [(o.dt && o.dt[0]) || 0, +(v).toFixed(2)]; })),
+      this._numRow("Delta Scale X", ds[0] || 0, -0.95, 3, 0.01, (v) => mutate("Delta Scale X", (o) => { o.dScale = [+(v).toFixed(4), (o.dScale && o.dScale[1]) || 0]; })),
+      this._numRow("Delta Scale Y", ds[1] || 0, -0.95, 3, 0.01, (v) => mutate("Delta Scale Y", (o) => { o.dScale = [(o.dScale && o.dScale[0]) || 0, +(v).toFixed(4)]; })),
+      this._numRow("Delta Rot °", d.dRot || 0, -180, 180, 0.5, (v) => mutate("Delta Rot", (o) => { o.dRot = +v.toFixed(3); })),
+      this._numRow("Delta Opacity", d.dOp || 0, -1, 1, 0.02, (v) => mutate("Delta Opacity", (o) => { o.dOp = Math.max(-1, Math.min(1, +v.toFixed(3))); })),
+    );
+  }
+
+  /* ---------- TRANSFORM & KEYFORM / BLEND SHAPE TAB ---------- */
   _renderTransformTab() {
     const st = this.state;
     const L = st.getSelectedLayer();
     const SL = st.getActiveSampleLayer();
     if (!L || !SL) return this._renderLayerTab();
-    const dec = decomposeAffine(SL.A || [1, 0, 0, 1]);
 
+    const g0 = this._group();
+    g0.appendChild(this._rigTargetBanner());
+
+    if (st.rigTarget.type === "blend") {
+      const bs = st.getActiveBlendShape();
+      if (bs) {
+        const gMeta = this._group();
+        const mh = document.createElement("div"); mh.className = "subhead"; mh.textContent = "BLEND SHAPE SETTINGS";
+        gMeta.append(
+          mh,
+          this._textRow("Name", bs.name, (val) => {
+            const clean = val.trim();
+            if (!clean) return;
+            st.pushUndo("Rename Blend Shape");
+            bs.name = clean;
+            st.emit("pack:mutated", { structural: true });
+          }),
+          this._selectRow("Range", bs.min < 0 ? "bipolar" : "unipolar", [
+            ["unipolar", "0.0 → 1.0"],
+            ["bipolar", "-1.0 → +1.0"],
+          ], (v) => {
+            st.pushUndo("Change Blend Range");
+            bs.min = v === "bipolar" ? -1 : 0;
+            bs.max = 1;
+            st.emit("pack:mutated", { structural: true });
+          }),
+          this._selectRow("Live Binding", bs.bind || "", BLEND_BINDS, (v) => {
+            st.pushUndo("Bind Blend Shape");
+            bs.bind = v || null;
+            st.emit("pack:mutated", { structural: true });
+          }),
+        );
+
+        const gDelta = this._group();
+        const dh = document.createElement("div"); dh.className = "subhead"; dh.textContent = `LAYER DELTA (${L.id})`;
+        gDelta.appendChild(dh);
+        this._appendDeltaTransformFields(gDelta);
+        const btnRow = document.createElement("div"); btnRow.className = "prop-btn-row";
+        btnRow.append(
+          this._actionBtn("Reset Layer Delta", () => {
+            if (!bs.layers || !bs.layers[L.id]) return;
+            st.pushUndo("Reset Blend Shape Layer");
+            delete bs.layers[L.id];
+            st.emit("pack:mutated");
+          }),
+          this._actionBtn("Delete Shape", () => st.deleteBlendShape(bs.id)),
+        );
+        gDelta.appendChild(btnRow);
+
+        const affected = Object.keys(bs.layers || {});
+        if (affected.length) {
+          const gAff = this._group();
+          const ah = document.createElement("div"); ah.className = "subhead"; ah.textContent = `AFFECTED LAYERS (${affected.length})`;
+          gAff.appendChild(ah);
+          const list = document.createElement("div"); list.className = "mini-checklist";
+          for (const lid of affected) {
+            const row = document.createElement("div"); row.className = "mini-check-item";
+            row.style.justifyContent = "space-between";
+            const sp = document.createElement("span");
+            sp.textContent = lid;
+            sp.style.cursor = "pointer";
+            sp.addEventListener("click", () => {
+              const idx = st.pack.layers.findIndex((x) => x.id === lid);
+              if (idx >= 0) st.selectLayer(idx);
+            });
+            const xBtn = document.createElement("button");
+            xBtn.type = "button"; xBtn.className = "kf-mini-btn"; xBtn.textContent = "×";
+            xBtn.title = `Clear ${lid} from ${bs.name}`;
+            xBtn.addEventListener("click", () => {
+              st.pushUndo("Clear Blend Shape Layer");
+              delete bs.layers[lid];
+              st.emit("pack:mutated");
+            });
+            row.append(sp, xBtn);
+            list.appendChild(row);
+          }
+          gAff.appendChild(list);
+          this.bodyEl.append(g0, gMeta, gDelta, gAff);
+        } else {
+          this.bodyEl.append(g0, gMeta, gDelta);
+        }
+        return;
+      }
+    }
+
+    if (st.rigTarget.type === "pitch") {
+      const g1 = this._group();
+      const h1 = document.createElement("div"); h1.className = "subhead"; h1.textContent = `ANGLE Y DELTA (${L.id})`;
+      g1.appendChild(h1);
+      this._appendDeltaTransformFields(g1);
+
+      const g2 = this._group();
+      const r1 = document.createElement("div"); r1.className = "prop-btn-row";
+      r1.append(
+        this._actionBtn("Mirror Up ↔ Down", () => {
+          const ps = st.ensurePitchSamples();
+          const cur = ps[st.activePitchIdx];
+          if (!cur || Math.abs(cur.pitch) < 1e-4) return;
+          const oppVal = -cur.pitch;
+          let dstIdx = ps.findIndex((s) => Math.abs(s.pitch - oppVal) < 0.05);
+          st.pushUndo("Mirror Angle Y Up ↔ Down");
+          if (dstIdx < 0) {
+            ps.push({ pitch: oppVal, layers: {} });
+            ps.sort((a, b) => a.pitch - b.pitch);
+            dstIdx = ps.findIndex((s) => Math.abs(s.pitch - oppVal) < 0.05);
+          }
+          const srcD = cur.layers?.[L.id];
+          if (srcD) {
+            ps[dstIdx].layers = ps[dstIdx].layers || {};
+            ps[dstIdx].layers[L.id] = {
+              dt: [srcD.dt?.[0] || 0, -(srcD.dt?.[1] || 0)],
+              dRot: -(srcD.dRot || 0),
+              dScale: [srcD.dScale?.[0] || 0, srcD.dScale?.[1] || 0],
+              dOp: srcD.dOp || 0,
+              ...(srcD.F ? { F: mirrorGridY(srcD.F) } : {}),
+            };
+          }
+          st.snapToPitchSample(dstIdx);
+          st.emit("pack:mutated", { structural: true });
+        }),
+        this._actionBtn("Reset Angle Y", () => {
+          const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+          if (!tgt?.sample?.layers?.[L.id]) return;
+          st.pushUndo("Reset Angle Y Delta");
+          delete tgt.sample.layers[L.id];
+          st.emit("pack:mutated");
+        }),
+      );
+      g2.appendChild(r1);
+      this.bodyEl.append(g0, g1, g2);
+      return;
+    }
+
+    // Default: Angle X keyform transform
+    const dec = decomposeAffine(SL.A || [1, 0, 0, 1]);
     const g1 = this._group();
     g1.append(
       this._numRow("Position X", SL.t[0], -4000, 8000, 1, (v) => { st.snapToSample(st.activeSampleIdx); st.pushUndo("Move X"); st.getActiveSampleLayer().t[0] = +v.toFixed(2); st.emit("pack:mutated"); }, "tx"),
@@ -278,19 +485,23 @@ export class RightInspector {
       }),
     );
     g2.append(r1, r2);
-    this.bodyEl.append(g1, g2);
+    this.bodyEl.append(g0, g1, g2);
   }
 
-  /* ---------- WARP & MESH SCULPTING TAB ---------- */
+  /* ---------- WARP & FORWARD MESH SCULPTING TAB ---------- */
   _renderWarpTab() {
     const st = this.state;
     const L = st.getSelectedLayer();
-    const SL = st.getActiveSampleLayer();
-    if (!L || !SL) {
-      this.bodyEl.innerHTML = `<div class="empty-note">Select a layer to sculpt its warp mesh.</div>`;
+    if (!L) {
+      this.bodyEl.innerHTML = `<div class="empty-note">Select a layer to sculpt its forward mesh.</div>`;
       return;
     }
-    const gd = gridSizeOf(SL.D) || st.brush.gridSize;
+    const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+    const gd = gridSizeOf(tgt?.obj?.F) || st.brush.gridSize;
+
+    const g0 = this._group();
+    g0.appendChild(this._rigTargetBanner());
+
     const g1 = this._group();
     g1.append(
       this._selectRow("Brush Mode", st.brush.mode, [
@@ -300,22 +511,66 @@ export class RightInspector {
       ], (v) => { st.brush.mode = v; }),
       this._sliderRow("Brush Radius", st.brush.radius, 20, 320, 1, (v) => { st.brush.radius = v; }, (v) => `${Math.round(v)}px`),
       this._sliderRow("Brush Strength", st.brush.strength, 0.05, 1.0, 0.01, (v) => { st.brush.strength = v; }, (v) => v.toFixed(2)),
-      this._selectRow("Warp Grid", String(gd), [["3", "3×3 (9 pts)"], ["5", "5×5 (25 pts)"], ["7", "7×7 (49 pts)"], ["9", "9×9 (81 pts)"], ["11", "11×11 (121 pts)"]], (v) => {
-        st.pushUndo("Resample Warp Grid");
+      this._selectRow("Mesh Grid", String(gd), [["3", "3×3 (9 pts)"], ["5", "5×5 (25 pts)"], ["7", "7×7 (49 pts)"], ["9", "9×9 (81 pts)"], ["11", "11×11 (121 pts)"]], (v) => {
+        st.pushUndo("Resample Forward Mesh");
         const ng = Number(v);
         st.brush.gridSize = ng;
-        ensureGrid(SL, ng);
+        st.selectedVerts.clear();
+        const t = st.getEditTargetForLayer(st.selectedLayerIdx, true);
+        if (t?.obj) ensureForwardGrid(t.obj, ng);
         st.emit("pack:mutated");
       }),
+      this._checkRow("Pin Border Vertices", st.brush.pinBorder, (v) => { st.brush.pinBorder = v; }),
+      this._checkRow("Soft Selection", st.brush.softSelect, (v) => { st.brush.softSelect = v; this.render(); }),
     );
+    if (st.brush.softSelect) {
+      g1.appendChild(this._sliderRow("Soft Radius", st.brush.softRadius, 30, 360, 5, (v) => { st.brush.softRadius = v; }, (v) => `${Math.round(v)}px`));
+    }
+
     const g2 = this._group();
     const btns = document.createElement("div"); btns.className = "prop-btn-row";
     btns.append(
-      this._actionBtn("Smooth Grid", () => { st.pushUndo("Smooth Warp"); smoothGrid(SL, 0.35); st.emit("pack:mutated"); }),
-      this._actionBtn("Reset Warp", () => { st.pushUndo("Reset Warp"); delete SL.D; st.emit("pack:mutated"); }),
+      this._actionBtn("Smooth Mesh", () => {
+        const t = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+        if (!t?.obj) return;
+        st.pushUndo("Smooth Mesh");
+        smoothGrid(t.obj, 0.35);
+        st.emit("pack:mutated");
+      }),
+      this._actionBtn("Reset Mesh", () => {
+        const t = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+        if (!t?.obj) return;
+        st.pushUndo("Reset Mesh");
+        delete t.obj.F;
+        if (t.kind === "yaw") delete t.obj.D;
+        st.emit("pack:mutated");
+      }),
     );
-    g2.append(btns);
-    this.bodyEl.append(g1, g2);
+    const btns2 = document.createElement("div"); btns2.className = "prop-btn-row";
+    btns2.append(
+      this._actionBtn("Reset Selected Pts", () => {
+        if (!st.selectedVerts.size) return;
+        const t = st.getEditTargetForLayer(st.selectedLayerIdx, false);
+        if (!t?.obj?.F) return;
+        st.pushUndo("Reset Selected Mesh Vertices");
+        for (const vi of st.selectedVerts) {
+          if (vi * 2 + 1 < t.obj.F.length) {
+            t.obj.F[vi * 2] = 0;
+            t.obj.F[vi * 2 + 1] = 0;
+          }
+        }
+        st.emit("pack:mutated");
+      }),
+      this._actionBtn("Clear Selection", () => { st.selectedVerts.clear(); }),
+    );
+    g2.append(btns, btns2);
+
+    const tip = document.createElement("div");
+    tip.className = "param-empty-note";
+    tip.textContent = "Lattice / Mesh tip: Drag empty canvas to box-select vertices, Shift+Click to multi-select, Arrow keys to nudge 1px (Shift=10px).";
+    g2.appendChild(tip);
+
+    this.bodyEl.append(g0, g1, g2);
   }
 
   /* ---------- PHYSICS & TAIL RIG TAB ---------- */
@@ -379,7 +634,6 @@ export class RightInspector {
       g1.appendChild(jRow);
     }
 
-    // Tail Rig Section
     const g2 = this._group();
     const tHead = document.createElement("div"); tHead.className = "subhead"; tHead.textContent = "PELVIS-LOCKED TAIL";
     g2.appendChild(tHead);
@@ -401,7 +655,6 @@ export class RightInspector {
       );
     }
 
-    // Live Physics Simulation Controls
     const g3 = this._group();
     const pHead = document.createElement("div"); pHead.className = "subhead"; pHead.textContent = "SIMULATION";
     g3.append(
@@ -413,7 +666,7 @@ export class RightInspector {
     this.bodyEl.append(g1, g2, g3);
   }
 
-  /* ---------- EXPRESSIONS, TOGGLES, HOLDS & VOWELS TAB ---------- */
+  /* ---------- EXPRESSIONS, BLEND WEIGHTS, TOGGLES & VOWELS TAB ---------- */
   _renderExpressionsTab() {
     const st = this.state;
     const P = st.pack;
@@ -456,7 +709,21 @@ export class RightInspector {
         }, (v) => v.toFixed(2)),
       );
 
-      // Hide layers checklist
+      // Drive Blend Shapes directly from this expression
+      if (P.blendShapes && P.blendShapes.length) {
+        const bLbl = document.createElement("div"); bLbl.className = "subhead"; bLbl.textContent = "BLEND SHAPES IN EXPRESSION";
+        g1.appendChild(bLbl);
+        for (const bs of P.blendShapes) {
+          const curW = (F.blend && F.blend[bs.id]) || 0;
+          g1.appendChild(this._sliderRow(bs.name, curW, bs.min ?? 0, bs.max ?? 1, 0.01, (v) => {
+            F.blend = F.blend || {};
+            if (Math.abs(v) < 1e-4) delete F.blend[bs.id];
+            else F.blend[bs.id] = +v.toFixed(3);
+            st.emit("pack:mutated", { silentInspector: true });
+          }, (v) => v.toFixed(2)));
+        }
+      }
+
       const hLbl = document.createElement("div"); hLbl.className = "subhead"; hLbl.textContent = "HIDDEN LAYERS IN EXPRESSION";
       const hList = document.createElement("div"); hList.className = "mini-checklist"; hList.dataset.scrollKey = "expr-hide";
       const hideSet = new Set(F.hide || []);
@@ -476,7 +743,6 @@ export class RightInspector {
         hList.appendChild(item);
       }
 
-      // Attach FX / Pieces checklist + Import new Flipbook FX button
       const pLbl = document.createElement("div"); pLbl.className = "subhead"; pLbl.textContent = "OVERLAY / FLIPBOOK FX PIECES";
       const pList = document.createElement("div"); pList.className = "mini-checklist"; pList.dataset.scrollKey = "expr-add";
       const addSet = new Set(F.add || []);
@@ -498,7 +764,6 @@ export class RightInspector {
       g1.append(hLbl, hList, pLbl, pList, this._actionBtn("+ Import FX Sprite / Flipbook…", () => this.onAction("import-fx")));
     }
 
-    // Vowel Lip-Sync Mapper (A/E/I/O/U)
     const g2 = this._group();
     const vHead = document.createElement("div"); vHead.className = "subhead"; vHead.textContent = "LIP-SYNC VOWEL MAPPING";
     g2.appendChild(vHead);
@@ -512,7 +777,6 @@ export class RightInspector {
       }));
     }
 
-    // Create Outfit Toggle from Selected Layer
     const g3 = this._group();
     const oHead = document.createElement("div"); oHead.className = "subhead"; oHead.textContent = "OUTFIT TOGGLES";
     g3.append(oHead, this._actionBtn("+ Toggle from Selected Layer", () => {
@@ -531,7 +795,7 @@ export class RightInspector {
     this.bodyEl.append(g1, g2, g3);
   }
 
-  /* ---------- ANIMATE MODE PANEL (Interactive Cubic Bezier Curve + Physics Preview — matches studio_concept_animate.png!) ---------- */
+  /* ---------- ANIMATE MODE PANEL ---------- */
   _renderAnimatePanel() {
     const st = this.state;
     const bz = st.studio.bezier || (st.studio.bezier = { p1x: 0.25, p1y: 0.1, p2x: 0.75, p2y: 0.9, preset: "easeInOut" });
@@ -556,7 +820,6 @@ export class RightInspector {
       b.textContent = label;
       b.addEventListener("click", () => {
         Object.assign(bz, vals, { preset: key });
-        // Apply easing to currently selected timeline keyframe if any
         const clip = st.getActiveClip();
         const tr = clip?.tracks?.[st.timeline.selectedTrack];
         if (tr && st.timeline.selectedKeyIdx >= 0 && tr[st.timeline.selectedKeyIdx]) {
@@ -596,7 +859,6 @@ export class RightInspector {
       const toX = (u) => ox + u * gw;
       const toY = (v) => oy - v * gh;
 
-      // Grid & labels
       ctx.strokeStyle = "rgba(255,255,255,0.08)";
       ctx.fillStyle = "#6b7079";
       ctx.font = '10px "JetBrains Mono", monospace';
@@ -610,14 +872,12 @@ export class RightInspector {
         ctx.fillText(u.toFixed(1), 2, y + 3);
       }
 
-      // Handle stems
       ctx.strokeStyle = "rgba(242,243,245,0.28)";
       ctx.beginPath();
       ctx.moveTo(toX(0), toY(0)); ctx.lineTo(toX(bz.p1x), toY(bz.p1y));
       ctx.moveTo(toX(1), toY(1)); ctx.lineTo(toX(bz.p2x), toY(bz.p2y));
       ctx.stroke();
 
-      // Crimson Bezier curve
       ctx.strokeStyle = "#be1e3c";
       ctx.lineWidth = 2.2;
       ctx.beginPath();
@@ -625,13 +885,11 @@ export class RightInspector {
       ctx.bezierCurveTo(toX(bz.p1x), toY(bz.p1y), toX(bz.p2x), toY(bz.p2y), toX(1), toY(1));
       ctx.stroke();
 
-      // Endpoints (crimson dots with white stroke)
       for (const [u, v] of [[0, 0], [1, 1]]) {
         ctx.beginPath(); ctx.arc(toX(u), toY(v), 4, 0, Math.PI * 2);
         ctx.fillStyle = "#be1e3c"; ctx.fill();
         ctx.strokeStyle = "#f2f3f5"; ctx.lineWidth = 1.2; ctx.stroke();
       }
-      // Draggable P1/P2 square handles
       for (const [u, v] of [[bz.p1x, bz.p1y], [bz.p2x, bz.p2y]]) {
         ctx.fillStyle = "#0c0d10";
         ctx.strokeStyle = "#f2f3f5";
@@ -700,6 +958,18 @@ export class RightInspector {
       if (!Number.isNaN(v)) onChange(v);
     });
     row.append(l, inp);
+    return row;
+  }
+
+  _checkRow(label, checked, onChange) {
+    const row = document.createElement("div"); row.className = "prop-row";
+    const l = document.createElement("span"); l.className = "prop-lbl"; l.textContent = label;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = Boolean(checked);
+    cb.style.justifySelf = "end";
+    cb.addEventListener("change", () => onChange(cb.checked));
+    row.append(l, cb);
     return row;
   }
 

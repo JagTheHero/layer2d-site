@@ -2,13 +2,20 @@
  * Layer2D Studio Reactive Document Store
  * Owns:
  *   - Active pack.json, manifest, textures, non-destructive studio.json
+ *   - Unified Rig Target: Angle X keyforms (`pack.samples`), Angle Y keyforms (`pack.pitchSamples`),
+ *     and additive Blend Shapes (`pack.blendShapes`)
  *   - Undo/Redo command history stack (Ctrl+Z / Ctrl+Shift+Z)
- *   - Workspace Mode, Tool, Selection, Parameter state, Viewport camera, Timeline state
- *   - Event emitter for crisp panel synchronization
+ *   - Workspace Mode, Tool, Selection (layers, multi-vertex mesh selection, chains), Parameters, Camera, Timeline
  */
+
+import { lerpGrids } from "./warp_math.js";
 
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
+}
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
 }
 
 export function createDefaultStudio(pack) {
@@ -65,7 +72,7 @@ export function createDefaultStudio(pack) {
             { t: 0.0, v: 1.0, ease: "linear" },
             { t: 1.8, v: 1.0, ease: "linear" },
             { t: 1.9, v: 0.0, ease: "linear" },
-            { t: 2.03, v: 1.0, ease: "linear" },
+            { t: 2.033, v: 1.0, ease: "linear" },
             { t: 4.0, v: 1.0, ease: "linear" },
             { t: 5.0, v: 1.0, ease: "linear" },
           ],
@@ -116,16 +123,17 @@ export class StudioState {
     this.selectedChainIdx = -1;
     this.selectedExprName = null;
     this.selectedHoldName = null;
+    this.selectedVerts = new Set(); // selected forward-mesh vertex indices (iy * gd + ix)
     this.selectedFolderCollapsed = new Set();
     this.hiddenIds = new Set();
     this.lockedIds = new Set();
     this.soloId = null;
     this.layerSearch = "";
 
-    // Parameters & Keyform Lock
+    // Parameters & Keyform / Blend-Shape Rig Target
     this.params = {
       a: 0,           // -1 .. +1 (displayed as -32.5° .. +32.5°)
-      pitch: 0,       // -1 .. +1
+      pitch: 0,       // -1 .. +1 (displayed as -30.0° .. +30.0°)
       roll: 0,        // radians (-0.35 .. +0.35)
       eyes: 1.0,      // 0 .. 1.3
       vowel: null,    // null | "A" | "I" | "U" | "E" | "O"
@@ -136,16 +144,23 @@ export class StudioState {
       face: null,
       hold: null,
       wear: {},
+      blend: {},      // { [blendShapeId]: weight }
     };
     this.activeSampleIdx = 0;     // closest or locked sample index in pack.samples
-    this.snapToKeyform = true;    // when true while rigging, edits lock cleanly to activeSampleIdx!
+    this.snapToKeyform = true;    // when true while rigging yaw, locks to activeSampleIdx
+    this.activePitchIdx = 1;      // closest or locked index in pack.pitchSamples
+    this.snapToPitch = false;     // when true while rigging Angle Y, locks to activePitchIdx
+    this.rigTarget = { type: "yaw", idx: 0 }; // { type: "yaw", idx } | { type: "pitch", idx } | { type: "blend", id }
 
-    // Warp / Sculpt Brush settings
+    // Warp / Mesh Sculpting settings
     this.brush = {
       radius: 120,
       strength: 0.65,
       mode: "push",   // push | smooth | restore
       gridSize: 5,
+      pinBorder: false,
+      softSelect: false,
+      softRadius: 150,
     };
 
     // Viewport overlays & camera
@@ -205,11 +220,20 @@ export class StudioState {
     this.redoStack = [];
     this.hiddenIds.clear();
     this.lockedIds.clear();
+    this.selectedVerts.clear();
     this.soloId = null;
 
-    // Default to center (front) sample
+    // Default to center (front) yaw sample
     const nS = (pack.samples || []).length;
     this.activeSampleIdx = Math.floor(nS / 2);
+    this.snapToKeyform = true;
+
+    // Sync Angle Y keyforms if present
+    const ps = pack.pitchSamples;
+    this.activePitchIdx = ps && ps.length ? this._findClosestPitchIdx(ps, 0) : 1;
+    this.snapToPitch = false;
+    this.rigTarget = { type: "yaw", idx: this.activeSampleIdx };
+
     this.params.a = 0;
     this.params.pitch = 0;
     this.params.roll = 0;
@@ -221,8 +245,11 @@ export class StudioState {
     for (const [g, o] of Object.entries(pack.outfits || {})) {
       this.params.wear[g] = o.default === false ? 0 : 1;
     }
+    this.params.blend = {};
+    for (const bs of pack.blendShapes || []) {
+      this.params.blend[bs.id] = bs.default ?? 0;
+    }
 
-    // Select a nice prominent default layer (front bangs or face or top layer)
     const preferred = pack.layers.findIndex((l) => /^H03C|bang/i.test(l.id));
     const faceIdx = pack.layers.findIndex((l) => /^F01|face/i.test(l.id));
     this.selectedLayerIdx = preferred >= 0 ? preferred : (faceIdx >= 0 ? faceIdx : Math.max(0, pack.layers.length - 1));
@@ -234,6 +261,7 @@ export class StudioState {
     this.timeline.clipIdx = 0;
     this.timeline.time = 0;
     this.timeline.playing = false;
+    this.timeline.selectedKeyIdx = -1;
 
     this.emit("doc:loaded");
     this.emit("selection:changed");
@@ -258,6 +286,7 @@ export class StudioState {
       studio: deepClone(this.studio),
       selectedLayerIdx: this.selectedLayerIdx,
       selectedChainIdx: this.selectedChainIdx,
+      rigTarget: deepClone(this.rigTarget),
     };
     this.undoStack.push(snap);
     if (this.undoStack.length > this.maxHistory) this.undoStack.shift();
@@ -274,15 +303,19 @@ export class StudioState {
       studio: deepClone(this.studio),
       selectedLayerIdx: this.selectedLayerIdx,
       selectedChainIdx: this.selectedChainIdx,
+      rigTarget: deepClone(this.rigTarget),
     });
     const prev = this.undoStack.pop();
     this.pack = prev.pack;
     this.studio = prev.studio;
     this.selectedLayerIdx = Math.min(prev.selectedLayerIdx, this.pack.layers.length - 1);
     this.selectedChainIdx = Math.min(prev.selectedChainIdx, (this.pack.chains || []).length - 1);
+    if (prev.rigTarget) this.rigTarget = prev.rigTarget;
+    this.selectedVerts.clear();
     this.dirty = true;
     this.emit("pack:mutated", { structural: true });
     this.emit("selection:changed");
+    this.emit("params:changed");
     this.emit("history:changed");
     return true;
   }
@@ -295,15 +328,19 @@ export class StudioState {
       studio: deepClone(this.studio),
       selectedLayerIdx: this.selectedLayerIdx,
       selectedChainIdx: this.selectedChainIdx,
+      rigTarget: deepClone(this.rigTarget),
     });
     const next = this.redoStack.pop();
     this.pack = next.pack;
     this.studio = next.studio;
     this.selectedLayerIdx = Math.min(next.selectedLayerIdx, this.pack.layers.length - 1);
     this.selectedChainIdx = Math.min(next.selectedChainIdx, (this.pack.chains || []).length - 1);
+    if (next.rigTarget) this.rigTarget = next.rigTarget;
+    this.selectedVerts.clear();
     this.dirty = true;
     this.emit("pack:mutated", { structural: true });
     this.emit("selection:changed");
+    this.emit("params:changed");
     this.emit("history:changed");
     return true;
   }
@@ -320,8 +357,15 @@ export class StudioState {
     return this.pack.samples[si].layers[layerIdx] || null;
   }
 
+  /* ---------- Angle X (Yaw) Keyforms ---------- */
+  _normAngleOf(sampleAngle) {
+    const turn = this.pack?.head?.turn || { R: -0.22, L: 0.22 };
+    return sampleAngle < 0 ? -sampleAngle / (turn.R || -0.22) : sampleAngle / (turn.L || 0.22);
+  }
+
   setAngle(a, snapSample = false) {
-    this.params.a = Math.max(-1, Math.min(1, a));
+    this.params.a = clamp(a, -1, 1);
+    this.snapToKeyform = Boolean(snapSample);
     const S = this.pack && this.pack.samples;
     if (S && S.length) {
       const turn = this.pack.head.turn;
@@ -336,6 +380,7 @@ export class StudioState {
         const sa = S[best].angle;
         this.params.a = sa < 0 ? -sa / turn.R : sa / turn.L;
       }
+      if (this.rigTarget.type === "yaw") this.rigTarget.idx = best;
     }
     this.emit("params:changed");
   }
@@ -348,9 +393,358 @@ export class StudioState {
     const turn = this.pack.head.turn;
     this.params.a = sa < 0 ? -sa / (turn.R || -0.22) : sa / (turn.L || 0.22);
     this.snapToKeyform = true;
+    this.snapToPitch = false;
+    this.rigTarget = { type: "yaw", idx: sampleIdx };
+    this.emit("params:changed");
+    this.emit("rigTarget:changed");
+  }
+
+  addYawKeyform(normA = this.params.a) {
+    const P = this.pack;
+    if (!P || !P.samples || !P.samples.length) return { ok: false, reason: "No yaw samples loaded" };
+    const na = clamp(normA, -1, 1);
+    const turn = P.head.turn;
+    const ang = +(na < 0 ? -na * turn.R : na * turn.L).toFixed(5);
+
+    // Prevent overlapping an existing yaw keyform!
+    for (let i = 0; i < P.samples.length; i++) {
+      const existNorm = this._normAngleOf(P.samples[i].angle);
+      if (Math.abs(existNorm - na) < 0.035) {
+        this.snapToSample(i);
+        return { ok: false, reason: `Keyform already exists near ${(existNorm * 32.5).toFixed(1)}° (snapped to it)` };
+      }
+    }
+
+    this.pushUndo("Add Angle X Keyform");
+    // Find surrounding samples for smooth linear interpolation
+    let lo = 0;
+    while (lo + 1 < P.samples.length && P.samples[lo + 1].angle < ang) lo++;
+    const s0 = P.samples[lo];
+    const s1 = P.samples[Math.min(lo + 1, P.samples.length - 1)];
+    const f = s1.angle === s0.angle ? 0 : clamp((ang - s0.angle) / (s1.angle - s0.angle), 0, 1);
+    const lerp = (x, y) => x + (y - x) * f;
+    const lerpA = (x, y) => x.map((v, k) => +(v + (y[k] - v) * f).toFixed(5));
+
+    const newSample = {
+      angle: ang,
+      jaw: +lerp(s0.jaw || 0, s1.jaw || 0).toFixed(4),
+      chin: +lerp(s0.chin || 0, s1.chin || 0).toFixed(4),
+      ...(s0.chinAt && s1.chinAt ? { chinAt: [lerp(s0.chinAt[0], s1.chinAt[0]), lerp(s0.chinAt[1], s1.chinAt[1])] } : {}),
+      layers: s0.layers.map((a, k) => {
+        const b = s1.layers[k] || a;
+        const o = {
+          A: lerpA(a.A, b.A),
+          t: [+lerp(a.t[0], b.t[0]).toFixed(2), +lerp(a.t[1], b.t[1]).toFixed(2)],
+          op: +lerp(a.op, b.op).toFixed(3),
+        };
+        if (a.turn !== undefined || b.turn !== undefined) o.turn = +lerp(a.turn || 0, b.turn || 0).toFixed(4);
+        if (a.behind !== undefined || b.behind !== undefined) o.behind = lerp(a.behind || 0, b.behind || 0) >= 0.5 ? 1 : 0;
+        if (a.hole !== undefined || b.hole !== undefined) o.hole = +lerp(a.hole || 0, b.hole || 0).toFixed(4);
+        if (a.wipe !== undefined || b.wipe !== undefined) o.wipe = +lerp(a.wipe ?? 1, b.wipe ?? 1).toFixed(4);
+        if (a.cut !== undefined || b.cut !== undefined) {
+          o.cut = +lerp(a.cut || 0, b.cut || 0).toFixed(4);
+          if (a.slide && b.slide) o.slide = lerpA(a.slide, b.slide);
+        }
+        const dG = lerpGrids(a.D, b.D, f);
+        if (dG) o.D = dG.map((v) => +v.toFixed(5));
+        const fG = lerpGrids(a.F, b.F, f);
+        if (fG) o.F = fG.map((v) => +v.toFixed(5));
+        return o;
+      }),
+    };
+
+    const insertAt = P.samples.findIndex((s) => s.angle > ang);
+    const idx = insertAt < 0 ? P.samples.length : insertAt;
+    P.samples.splice(idx, 0, newSample);
+    this.snapToSample(idx);
+    this.emit("pack:mutated", { structural: true });
+    return { ok: true, idx, deg: +(na * 32.5).toFixed(1) };
+  }
+
+  deleteYawKeyform(idx = this.activeSampleIdx) {
+    const P = this.pack;
+    if (!P || !P.samples || P.samples.length <= 2) {
+      return { ok: false, reason: "Need at least 2 Angle X keyforms" };
+    }
+    if (idx < 0 || idx >= P.samples.length) return { ok: false, reason: "Invalid Angle X keyform" };
+    if (Math.abs(P.samples[idx].angle) < 1e-4) {
+      return { ok: false, reason: "Cannot delete the 0° center rest keyform" };
+    }
+    this.pushUndo("Delete Angle X Keyform");
+    P.samples.splice(idx, 1);
+    const nextIdx = Math.max(0, Math.min(P.samples.length - 1, idx - 1));
+    this.snapToSample(nextIdx);
+    this.emit("pack:mutated", { structural: true });
+    return { ok: true, idx: nextIdx };
+  }
+
+  /* ---------- Angle Y (Pitch) Keyforms ---------- */
+  _findClosestPitchIdx(ps, p) {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < ps.length; i++) {
+      const d = Math.abs(ps[i].pitch - p);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  getPitchSamplesView() {
+    const ps = this.pack && this.pack.pitchSamples;
+    if (ps && ps.length) return ps;
+    return [{ pitch: -1, layers: {} }, { pitch: 0, layers: {} }, { pitch: 1, layers: {} }];
+  }
+
+  ensurePitchSamples() {
+    if (!this.pack) return [];
+    if (!Array.isArray(this.pack.pitchSamples) || !this.pack.pitchSamples.length) {
+      this.pack.pitchSamples = [
+        { pitch: -1.0, layers: {} },
+        { pitch: 0.0, layers: {} },
+        { pitch: 1.0, layers: {} },
+      ];
+    }
+    this.pack.pitchSamples.sort((a, b) => a.pitch - b.pitch);
+    return this.pack.pitchSamples;
+  }
+
+  setPitch(p, snapPitch = false) {
+    this.params.pitch = clamp(p, -1, 1);
+    this.snapToPitch = Boolean(snapPitch);
+    const ps = this.getPitchSamplesView();
+    const best = this._findClosestPitchIdx(ps, this.params.pitch);
+    this.activePitchIdx = best;
+    if (snapPitch) {
+      this.params.pitch = ps[best].pitch;
+    }
+    if (this.rigTarget.type === "pitch") this.rigTarget.idx = best;
     this.emit("params:changed");
   }
 
+  snapToPitchSample(pitchIdx) {
+    const ps = this.ensurePitchSamples();
+    if (pitchIdx < 0 || pitchIdx >= ps.length) return;
+    this.activePitchIdx = pitchIdx;
+    this.params.pitch = ps[pitchIdx].pitch;
+    this.snapToPitch = true;
+    if (Math.abs(ps[pitchIdx].pitch) < 1e-4) {
+      // Center 0° pitch returns to active Yaw keyform target cleanly
+      this.rigTarget = { type: "yaw", idx: this.activeSampleIdx };
+    } else {
+      this.rigTarget = { type: "pitch", idx: pitchIdx };
+    }
+    this.emit("params:changed");
+    this.emit("rigTarget:changed");
+  }
+
+  addPitchKeyform(pitchVal = this.params.pitch) {
+    if (!this.pack) return { ok: false, reason: "No model loaded" };
+    const p = +clamp(pitchVal, -1, 1).toFixed(4);
+    const ps = this.ensurePitchSamples();
+    for (let i = 0; i < ps.length; i++) {
+      if (Math.abs(ps[i].pitch - p) < 0.04) {
+        this.snapToPitchSample(i);
+        return { ok: false, reason: `Angle Y keyform already exists near ${(ps[i].pitch * 30).toFixed(1)}° (snapped to it)` };
+      }
+    }
+    this.pushUndo("Add Angle Y Keyform");
+    const arr = this.ensurePitchSamples();
+    // Interpolate existing deltas from neighbors
+    let lo = 0;
+    while (lo + 1 < arr.length && arr[lo + 1].pitch < p) lo++;
+    const s0 = arr[lo], s1 = arr[Math.min(lo + 1, arr.length - 1)];
+    const f = s1.pitch === s0.pitch ? 0 : clamp((p - s0.pitch) / (s1.pitch - s0.pitch), 0, 1);
+    const layers = {};
+    const ids = new Set([...Object.keys(s0.layers || {}), ...Object.keys(s1.layers || {})]);
+    for (const id of ids) {
+      const a = s0.layers?.[id] || {}, b = s1.layers?.[id] || {};
+      const dt0 = a.dt || [0, 0], dt1 = b.dt || [0, 0];
+      const ds0 = a.dScale || [0, 0], ds1 = b.dScale || [0, 0];
+      const entry = {
+        dt: [+(dt0[0] + (dt1[0] - dt0[0]) * f).toFixed(2), +(dt0[1] + (dt1[1] - dt0[1]) * f).toFixed(2)],
+        dRot: +((a.dRot || 0) + ((b.dRot || 0) - (a.dRot || 0)) * f).toFixed(3),
+        dScale: [+(ds0[0] + (ds1[0] - ds0[0]) * f).toFixed(4), +(ds0[1] + (ds1[1] - ds0[1]) * f).toFixed(4)],
+        dOp: +((a.dOp || 0) + ((b.dOp || 0) - (a.dOp || 0)) * f).toFixed(3),
+      };
+      const fG = lerpGrids(a.F, b.F, f);
+      if (fG) entry.F = fG.map((v) => +v.toFixed(5));
+      layers[id] = entry;
+    }
+    const ins = arr.findIndex((s) => s.pitch > p);
+    const idx = ins < 0 ? arr.length : ins;
+    arr.splice(idx, 0, { pitch: p, layers });
+    this.snapToPitchSample(idx);
+    this.emit("pack:mutated", { structural: true });
+    return { ok: true, idx, deg: +(p * 30).toFixed(1) };
+  }
+
+  deletePitchKeyform(idx = this.activePitchIdx) {
+    const ps = this.pack && this.pack.pitchSamples;
+    if (!ps || ps.length <= 2) return { ok: false, reason: "Need at least 2 Angle Y keyforms" };
+    if (idx < 0 || idx >= ps.length) return { ok: false, reason: "Invalid Angle Y keyform" };
+    if (Math.abs(ps[idx].pitch) < 1e-4) return { ok: false, reason: "Cannot delete the 0° center Angle Y keyform" };
+    this.pushUndo("Delete Angle Y Keyform");
+    ps.splice(idx, 1);
+    const nextIdx = Math.max(0, Math.min(ps.length - 1, idx - 1));
+    this.snapToPitchSample(nextIdx);
+    this.emit("pack:mutated", { structural: true });
+    return { ok: true, idx: nextIdx };
+  }
+
+  /* ---------- Blend Shapes ---------- */
+  getBlendShape(id) {
+    if (!this.pack || !this.pack.blendShapes) return null;
+    return this.pack.blendShapes.find((b) => b.id === id) || null;
+  }
+
+  getActiveBlendShape() {
+    if (this.rigTarget.type !== "blend") return null;
+    return this.getBlendShape(this.rigTarget.id);
+  }
+
+  addBlendShape(name, opts = {}) {
+    if (!this.pack) return null;
+    this.pushUndo("Add Blend Shape");
+    this.pack.blendShapes = this.pack.blendShapes || [];
+    const clean = (name || "Blend Shape").trim() || "Blend Shape";
+    const baseId = "bs_" + clean.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    const used = new Set(this.pack.blendShapes.map((b) => b.id));
+    let id = baseId || "bs_shape", k = 2;
+    while (used.has(id)) id = `${baseId}_${k++}`;
+    const bs = {
+      id,
+      name: clean,
+      min: opts.min ?? 0,
+      max: opts.max ?? 1,
+      default: opts.default ?? 0,
+      bind: opts.bind ?? null,
+      layers: {},
+    };
+    this.pack.blendShapes.push(bs);
+    this.params.blend[id] = 1.0; // activate at 1.0 so the rigger sees their sculpt immediately!
+    this.rigTarget = { type: "blend", id };
+    this.emit("pack:mutated", { structural: true });
+    this.emit("params:changed");
+    this.emit("rigTarget:changed");
+    return bs;
+  }
+
+  deleteBlendShape(id) {
+    const BS = this.pack && this.pack.blendShapes;
+    if (!BS) return false;
+    const idx = BS.findIndex((b) => b.id === id);
+    if (idx < 0) return false;
+    this.pushUndo("Delete Blend Shape");
+    BS.splice(idx, 1);
+    delete this.params.blend[id];
+    for (const F of Object.values(this.pack.expr?.faces || {})) {
+      if (F.blend && id in F.blend) delete F.blend[id];
+    }
+    if (this.rigTarget.type === "blend" && this.rigTarget.id === id) {
+      this.rigTarget = { type: "yaw", idx: this.activeSampleIdx };
+    }
+    this.emit("pack:mutated", { structural: true });
+    this.emit("params:changed");
+    this.emit("rigTarget:changed");
+    return true;
+  }
+
+  setBlendWeight(id, w) {
+    const bs = this.getBlendShape(id);
+    if (!bs) return;
+    this.params.blend[id] = clamp(w, bs.min ?? 0, bs.max ?? 1);
+    this.emit("params:changed");
+  }
+
+  setRigTarget(target) {
+    if (!target) return;
+    if (target.type === "yaw") {
+      this.snapToSample(target.idx ?? this.activeSampleIdx);
+      return;
+    }
+    if (target.type === "pitch") {
+      this.snapToPitchSample(target.idx ?? this.activePitchIdx);
+      return;
+    }
+    if (target.type === "blend") {
+      const bs = this.getBlendShape(target.id);
+      if (!bs) return;
+      this.rigTarget = { type: "blend", id: bs.id };
+      if (Math.abs(this.params.blend[bs.id] ?? 0) < 0.05) {
+        this.params.blend[bs.id] = bs.max ?? 1;
+      }
+      this.emit("params:changed");
+      this.emit("rigTarget:changed");
+    }
+  }
+
+  getRigTargetLabel() {
+    if (!this.pack) return "—";
+    if (this.rigTarget.type === "blend") {
+      const bs = this.getBlendShape(this.rigTarget.id);
+      if (bs) {
+        const w = this.params.blend[bs.id] ?? bs.default ?? 0;
+        return `Blend: ${bs.name} (${w.toFixed(2)})`;
+      }
+    }
+    if (this.rigTarget.type === "pitch") {
+      const ps = this.getPitchSamplesView();
+      const s = ps[this.activePitchIdx];
+      if (s && Math.abs(s.pitch) > 1e-4) {
+        const d = s.pitch * 30;
+        return `Angle Y ${d >= 0 ? "+" : ""}${d.toFixed(1)}°`;
+      }
+    }
+    const S = this.pack.samples || [];
+    const s = S[this.activeSampleIdx];
+    const deg = s ? this._normAngleOf(s.angle) * 32.5 : this.params.a * 32.5;
+    return `Angle X ${deg >= 0 ? "+" : ""}${deg.toFixed(1)}°`;
+  }
+
+  /**
+   * Return the editable target object for the selected layer according to `this.rigTarget`.
+   * For Angle X: returns pack.samples[si].layers[layerIdx] (`kind: "yaw"`).
+   * For Angle Y: returns pack.pitchSamples[pi].layers[L.id] (`kind: "pitch"`).
+   * For Blend Shape: returns bs.layers[L.id] (`kind: "blend"`).
+   */
+  getEditTargetForLayer(layerIdx = this.selectedLayerIdx, createIfMissing = false) {
+    const P = this.pack;
+    if (!P || layerIdx < 0 || layerIdx >= P.layers.length) return null;
+    const L = P.layers[layerIdx];
+
+    if (this.rigTarget.type === "blend") {
+      const bs = this.getBlendShape(this.rigTarget.id);
+      if (bs) {
+        let w = this.params.blend[bs.id] ?? bs.default ?? 0;
+        if (createIfMissing && Math.abs(w) < 0.05) {
+          w = bs.max ?? 1;
+          this.params.blend[bs.id] = w;
+        }
+        bs.layers = bs.layers || {};
+        if (createIfMissing && !bs.layers[L.id]) {
+          bs.layers[L.id] = { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+        }
+        return { kind: "blend", bs, layerId: L.id, obj: bs.layers[L.id] || null, weightScale: w || 1 };
+      }
+    }
+
+    if (this.rigTarget.type === "pitch") {
+      const ps = createIfMissing ? this.ensurePitchSamples() : this.getPitchSamplesView();
+      const pi = Math.max(0, Math.min(ps.length - 1, this.activePitchIdx));
+      const sample = ps[pi];
+      if (sample && Math.abs(sample.pitch) > 1e-4) {
+        sample.layers = sample.layers || {};
+        if (createIfMissing && !sample.layers[L.id]) {
+          sample.layers[L.id] = { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+        }
+        return { kind: "pitch", pitchIdx: pi, sample, layerId: L.id, obj: sample.layers[L.id] || null, weightScale: 1 };
+      }
+    }
+
+    const si = Math.max(0, Math.min(P.samples.length - 1, this.activeSampleIdx));
+    return { kind: "yaw", sampleIdx: si, layerId: L.id, obj: P.samples[si]?.layers[layerIdx] || null, weightScale: 1 };
+  }
+
+  /* ---------- Mode, Tool, Selection & Layer Sync ---------- */
   setMode(mode) {
     this.mode = mode;
     if (mode === "animate") {
@@ -372,7 +766,7 @@ export class StudioState {
       this.view.showLattice = false;
     } else if (mode === "mesh") {
       this.inspectorTab = "warp";
-      this.tool = "lattice";
+      this.tool = "mesh";
       this.view.showLattice = true;
     } else if (mode === "rig") {
       this.inspectorTab = "layer";
@@ -400,8 +794,37 @@ export class StudioState {
   }
 
   selectLayer(idx) {
+    if (this.selectedLayerIdx !== idx) {
+      this.selectedVerts.clear();
+    }
     this.selectedLayerIdx = idx;
     this.emit("selection:changed");
+  }
+
+  renameLayerDeltas(oldId, newId) {
+    if (!this.pack) return;
+    for (const ps of this.pack.pitchSamples || []) {
+      if (ps.layers && oldId in ps.layers) {
+        ps.layers[newId] = ps.layers[oldId];
+        delete ps.layers[oldId];
+      }
+    }
+    for (const bs of this.pack.blendShapes || []) {
+      if (bs.layers && oldId in bs.layers) {
+        bs.layers[newId] = bs.layers[oldId];
+        delete bs.layers[oldId];
+      }
+    }
+  }
+
+  deleteLayerDeltas(layerId) {
+    if (!this.pack) return;
+    for (const ps of this.pack.pitchSamples || []) {
+      if (ps.layers && layerId in ps.layers) delete ps.layers[layerId];
+    }
+    for (const bs of this.pack.blendShapes || []) {
+      if (bs.layers && layerId in bs.layers) delete bs.layers[layerId];
+    }
   }
 
   reorderLayer(fromIdx, toIdx) {

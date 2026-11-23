@@ -834,3 +834,146 @@ a { color: inherit; text-decoration: none; }
 }
 .mini-check-item:hover { background: rgba(255, 255, 255, 0.04); }
 .mini-check-item input { accent-color: var(--crimson); }
+
+/* ---------- Keyform CRUD, Blend Shapes, Rig Target HUD & Timeline Scroll ---------- */
+.param-row.has-kf-btns {
+  grid-template-columns: 82px 1fr 48px;
+  gap: 6px;
+}
+.param-row.is-rig-target {
+  background: rgba(190, 30, 60, 0.08);
+  margin: 0 -6px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.param-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.kf-mini-btns {
+  display: inline-flex;
+  gap: 3px;
+}
+.kf-mini-btn {
+  width: 17px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--bg);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.kf-mini-btn:hover {
+  color: var(--text);
+  border-color: var(--crimson);
+  background: rgba(190, 30, 60, 0.16);
+}
+.param-diamond.has-edits {
+  background: #58b2ff;
+  border-color: #ffffff;
+}
+.param-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.param-empty-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dim);
+}
+.blend-row {
+  display: grid;
+  grid-template-columns: 20px 64px 1fr 34px 17px;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: 3px;
+}
+.blend-row.is-rig-target {
+  background: rgba(154, 92, 255, 0.16);
+  outline: 1px solid rgba(176, 118, 255, 0.45);
+}
+.blend-edit-btn {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.blend-edit-btn svg { width: 12px; height: 12px; }
+.blend-edit-btn:hover { color: var(--text); border-color: rgba(176, 118, 255, 0.65); }
+.blend-edit-btn.active { background: #7c3aed; border-color: #b076ff; color: #fff; }
+.blend-name { cursor: pointer; }
+.blend-val { font-size: 10.5px; text-align: right; color: var(--muted); }
+.blend-range { width: 100%; }
+
+.rig-target-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: rgba(190, 30, 60, 0.12);
+  border: 1px solid rgba(190, 30, 60, 0.35);
+  color: var(--text);
+}
+.rig-target-banner.pitch {
+  background: rgba(60, 157, 255, 0.14);
+  border-color: rgba(88, 178, 255, 0.42);
+}
+.rig-target-banner.blend {
+  background: rgba(124, 58, 237, 0.18);
+  border-color: rgba(176, 118, 255, 0.5);
+}
+.vp-target-pill {
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 3px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 18px;
+  background: rgba(190, 30, 60, 0.16);
+  border: 1px solid rgba(190, 30, 60, 0.45);
+  color: var(--text);
+  cursor: pointer;
+}
+.vp-target-pill.pitch {
+  background: rgba(60, 157, 255, 0.16);
+  border-color: rgba(88, 178, 255, 0.48);
+}
+.vp-target-pill.blend {
+  background: rgba(124, 58, 237, 0.22);
+  border-color: rgba(176, 118, 255, 0.55);
+}
+.btn-xs:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.tl-dope-wrap, .tl-tracks-col { overflow-y: auto; }
