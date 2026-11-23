@@ -1463,12 +1463,49 @@ function margin(f) {
 const face = { pick: null, from: -1, next: 1.5, t: 0, brow: {}, eye: [1, 1, 1, 1], name: null, since: 0 };   // eye: open R, L; iris R, L
 const gaze = { x: 0, y: 0, tx: 0, ty: 0, next: 0 };
 const hold = { pick: null };
+const SHOWCASE_FACES = [
+  "Smile", "Wink", "Starry", "Laugh", "Love", "Cute", "Surprised",
+  "Smug", "Pout", "Blow Kiss", "Excited", "Bleh", "Flustered",
+  "Proud", "Fang Smile", "Shy", "Puppy Eyes", "Happy", "Sparkle", "Blush",
+];
+const SHOWCASE_HOLDS = ["Peace", "Eye Peace", "Mic", "Wave", "Boba", "Heart", "Mug"];
+function autoHoldTimeline() {
+  const X = P && P.expr;
+  if (!X) return null;
+  if (Array.isArray(X.holdTimeline) && X.holdTimeline.length) return X.holdTimeline;
+  if (X._autoHoldTl !== undefined) return X._autoHoldTl;
+  const avail = Object.keys(X.holds || {});
+  if (!avail.length) return (X._autoHoldTl = null);
+  const picked = SHOWCASE_HOLDS.filter((k) => avail.includes(k));
+  const list = picked.length ? picked : avail.slice(0, 4);
+  const tl = [[0, null]];
+  let at = 3.2;
+  for (const name of list) {
+    tl.push([at, name]);
+    at += 2.6;
+    tl.push([at, null]);
+    at += 3.6;
+  }
+  return (X._autoHoldTl = tl);
+}
+function autoFaceTimeline() {
+  const X = P && P.expr;
+  if (!X) return null;
+  if (Array.isArray(X.faceTimeline) && X.faceTimeline.length) return X.faceTimeline;
+  if (X._autoFaceTl !== undefined) return X._autoFaceTl;
+  const avail = Object.keys(X.faces || {});
+  if (avail.length < 2) return (X._autoFaceTl = null);
+  const picked = SHOWCASE_FACES.filter((k) => avail.includes(k));
+  const list = picked.length >= 3 ? picked : avail.slice(0, 12);
+  const step = 2.2;
+  return (X._autoFaceTl = list.map((name, i) => [i * step, name]));
+}
 function holdName(t) {
   if (hold.pick || !ctl.auto) return hold.pick;
-  const src = (P && P.expr && Array.isArray(P.expr.holdTimeline) && P.expr.holdTimeline.length) ? P.expr.holdTimeline : null;
+  const src = autoHoldTimeline();
   if (!src) return null;
   const dur = Math.max(10, src[src.length - 1][0] + 2.0);
-  const tl = (t - ctl.autoT0) % dur; let name = null;
+  const tl = (((t - ctl.autoT0) % dur) + dur) % dur; let name = null;
   for (const [t0, n] of src) if (tl >= t0) name = n;
   return name && P.expr.holds && P.expr.holds[name] ? name : null;
 }
@@ -1479,10 +1516,10 @@ function faceName(t) {
   const faceKeys = Object.keys((P && P.expr && P.expr.faces) || {});
   const fallback = (P.expr.faces && P.expr.faces.Neutral) ? "Neutral" : (faceKeys[0] || null);
   if (!ctl.auto) return fallback;
-  const src = (P && P.expr && Array.isArray(P.expr.faceTimeline) && P.expr.faceTimeline.length) ? P.expr.faceTimeline : null;
+  const src = autoFaceTimeline();
   if (!src) return fallback;
-  const dur = Math.max(12, src[src.length - 1][0] + 1.5);
-  const tl = (t - ctl.autoT0) % dur; let name = fallback;
+  const dur = Math.max(12, src[src.length - 1][0] + 2.2);
+  const tl = (((t - ctl.autoT0) % dur) + dur) % dur; let name = fallback;
   for (const [t0, n] of src) if (tl >= t0) name = n;
   return (P.expr.faces && P.expr.faces[name]) ? name : fallback;
 }
@@ -1522,7 +1559,7 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
   let add = [...(F.add || [])];
   if (t >= face.next) { face.from = face.next; face.next = face.from + 2.2 + 3.5 * Math.random(); }
   let shut = false;
-  if (!snap && !camActive() && t - face.from < 0.12 && X.blink && Array.isArray(X.blink.hide) && !hide.has("E05R") && !hide.has("E05L")) {
+  if (!snap && !camActive() && t >= face.from && t - face.from < 0.12 && X.blink && Array.isArray(X.blink.hide) && !hide.has("E05R") && !hide.has("E05L")) {
     const drop = new Set(X.blink.drop || []);
     add = add.filter((p) => !drop.has(X.pieces[p].base)).concat(X.blink.add || []);
     for (const h of X.blink.hide) hide.add(h);
@@ -2892,6 +2929,7 @@ window.__rigApi = {
   init() {
     if (!window.__ready) return false;
     paused = true; fixedSize = true; bgMode = "transparent"; setAuto(false); simT = 0;
+    face.from = -1; face.next = 9999; face.t = 0; face.eye = [1, 1, 1, 1];
     return true;
   },
   render(st, rect, rw, rh, dt, resizeNeeded) {

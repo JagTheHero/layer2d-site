@@ -275,7 +275,10 @@ button { font: inherit; color: inherit; }
   letter-spacing: 0.02em;
   color: var(--text);
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 320ms var(--ease);
 }
+.avatar-card.is-live .live-badge { opacity: 1; }
 .live-dot {
   width: 6px;
   height: 6px;

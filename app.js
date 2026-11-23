@@ -38,8 +38,8 @@
     history.replaceState(null, "", a.getAttribute("href"));
   });
 
-  /* Live WebGL2 embed for public open-source Test Signal card (respects reduced motion). */
-  var prefersReduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /* Live WebGL2 embed for public open-source Test Signal card. */
+  var dialog = document.getElementById("lightbox");
   var liveFrames = new Map();
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.type !== "layer2d:ready") return;
@@ -50,7 +50,7 @@
 
   function setCardFramesPaused(wantPaused) {
     liveFrames.forEach(function (container, frame) {
-      if (container.classList.contains("avatar-card") && frame.contentWindow) {
+      if (container.classList.contains("avatar-card") && container.classList.contains("is-live") && frame.contentWindow) {
         try { frame.contentWindow.postMessage({ type: "layer2d:pause", paused: wantPaused }, "*"); } catch (_) {}
       }
     });
@@ -72,33 +72,30 @@
     portrait.appendChild(frame);
   }
 
-  if (!prefersReduced) {
-    var liveCards = document.querySelectorAll(".avatar-card[data-live-url]");
-    if ("IntersectionObserver" in window) {
-      var io = new IntersectionObserver(function (entries) {
-        entries.forEach(function (ent) {
-          if (ent.isIntersecting) {
-            mountLiveCard(ent.target);
-            var f = ent.target.querySelector("iframe.live-avatar");
-            if (f && f.contentWindow && (!dialog || !dialog.open)) {
-              try { f.contentWindow.postMessage({ type: "layer2d:pause", paused: false }, "*"); } catch (_) {}
-            }
-          } else {
-            var f2 = ent.target.querySelector("iframe.live-avatar");
-            if (f2 && f2.contentWindow) {
-              try { f2.contentWindow.postMessage({ type: "layer2d:pause", paused: true }, "*"); } catch (_) {}
-            }
+  var liveCards = document.querySelectorAll(".avatar-card[data-live-url]");
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (ent) {
+        if (ent.isIntersecting) {
+          mountLiveCard(ent.target);
+          var f = ent.target.querySelector("iframe.live-avatar");
+          if (f && f.contentWindow && ent.target.classList.contains("is-live") && (!dialog || !dialog.open)) {
+            try { f.contentWindow.postMessage({ type: "layer2d:pause", paused: false }, "*"); } catch (_) {}
           }
-        });
-      }, { rootMargin: "600px 0px" });
-      liveCards.forEach(function (c) { io.observe(c); });
-    } else {
-      liveCards.forEach(mountLiveCard);
-    }
+        } else if (ent.target.classList.contains("is-live")) {
+          var f2 = ent.target.querySelector("iframe.live-avatar");
+          if (f2 && f2.contentWindow) {
+            try { f2.contentWindow.postMessage({ type: "layer2d:pause", paused: true }, "*"); } catch (_) {}
+          }
+        }
+      });
+    }, { rootMargin: "600px 0px" });
+    liveCards.forEach(function (c) { io.observe(c); });
+  } else {
+    liveCards.forEach(mountLiveCard);
   }
 
   /* Avatar preview lightbox. */
-  var dialog = document.getElementById("lightbox");
   if (!dialog || typeof dialog.showModal !== "function") return;
   var lbStage = dialog.querySelector(".lb-stage");
   var img = document.getElementById("lb-img");
@@ -134,7 +131,7 @@
         studioLink.textContent = isDemo ? "Open in Studio" : "Try Demo Studio";
       }
       dialog.showModal();
-      if (isDemo && liveUrl && lbStage && !prefersReduced) {
+      if (isDemo && liveUrl && lbStage) {
         setCardFramesPaused(true);
         lbFrame = document.createElement("iframe");
         lbFrame.className = "lb-live";
