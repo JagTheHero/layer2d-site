@@ -20,6 +20,12 @@ import {
   invertForwardGridJS,
   isGridNonZero,
 } from "./warp_math.js";
+import {
+  hasSceneGraph,
+  buildSceneGraph,
+  applySceneGraphToKey,
+  getDescendants,
+} from "./scene_graph.js";
 
 const DEFAULT_VOWELS = { A: "M04", I: "M05", U: "M06", E: "M07", O: "M08" };
 const LID = [0.4, 0.15];
@@ -87,6 +93,8 @@ export class Layer2DEngine {
     this.lastFace = null;
     this.lastView = [0, 0, 1200, 2000];
     this.lastFrame = null;
+    this.restKey0 = null;
+    this._sceneGraph = null;
     this.fboW = 0;
     this.fboH = 0;
     this._offFbo = null;
@@ -259,6 +267,8 @@ export class Layer2DEngine {
 
     P.lidx = Object.fromEntries(P.layers.map((l, k) => [l.id, k]));
     this.HL_IDS = new Set(Array.isArray(P.highlightIds) ? P.highlightIds : []);
+    this._sceneGraph = hasSceneGraph(P) ? buildSceneGraph(P) : null;
+    this.restKey0 = this.keyAt(0);
 
     for (const L of P.layers) {
       if (L.kind === 0 && L.head && !L.pitchGroup) {
@@ -949,6 +959,8 @@ export class Layer2DEngine {
       if (bs.id in fBlend) w += fBlend[bs.id];
       if (bs.bind === "mouthOpen") w += params?.vowel ? 1 : 0;
       else if (bs.bind === "eyeOpen") w += clamp(1 - (params?.eyes ?? 1), 0, 1);
+      else if (bs.bind === "eyeX") w += clamp(params?.eyeX ?? ((params?.gazeX || 0) / 7), -1, 1);
+      else if (bs.bind === "eyeY") w += clamp(params?.eyeY ?? ((params?.gazeY || 0) / 3), -1, 1);
       else if (bs.bind === "breath") w += params?.breath || 0;
       else if (bs.bind === "angleX") w += params?.a || 0;
       else if (bs.bind === "angleY") w += params?.pitch || 0;
@@ -963,33 +975,73 @@ export class Layer2DEngine {
   }
 
   /**
-   * Compose full per-layer pose: Angle X keyform + Angle Y keyform delta + active Blend Shapes.
+   * Compose full per-layer pose: Angle X keyform + Angle Y keyform delta + active Blend Shapes
+   * + topological Scene Graph transform & opacity inheritance (parent -> child).
    */
   _composeKey(m, params, exactIdx = null, exactPitchIdx = null, fc = null) {
     const key = this.keyAt(m.a, exactIdx);
     const P = this.P;
     const pitchDeltas = this.pitchAt(m.pitch, exactPitchIdx);
     const blendWeights = this.resolveBlendWeights(params, fc);
-    if (!pitchDeltas && !blendWeights) return key;
 
-    const BS = P.blendShapes || [];
-    for (let i = 0; i < P.layers.length; i++) {
-      const id = P.layers[i].id;
-      let cur = key.layers[i];
-      if (!cur) continue;
-      if (pitchDeltas && pitchDeltas[id]) {
-        cur = applyLayerDelta(cur, pitchDeltas[id], 1.0);
-      }
-      if (blendWeights) {
-        for (const bs of BS) {
-          const w = blendWeights[bs.id];
-          if (!w || !bs.layers || !bs.layers[id]) continue;
-          cur = applyLayerDelta(cur, bs.layers[id], w);
+    if (pitchDeltas || blendWeights) {
+      const BS = P.blendShapes || [];
+      for (let i = 0; i < P.layers.length; i++) {
+        const id = P.layers[i].id;
+        let cur = key.layers[i];
+        if (!cur) continue;
+        if (pitchDeltas && pitchDeltas[id]) {
+          cur = applyLayerDelta(cur, pitchDeltas[id], 1.0);
         }
+        if (blendWeights) {
+          for (const bs of BS) {
+            const w = blendWeights[bs.id];
+            if (!w || !bs.layers || !bs.layers[id]) continue;
+            cur = applyLayerDelta(cur, bs.layers[id], w);
+          }
+        }
+        key.layers[i] = cur;
       }
-      key.layers[i] = cur;
+    }
+
+    if (hasSceneGraph(P)) {
+      const rest0 = this.restKey0 || this.keyAt(0);
+      key._nodeWorld = applySceneGraphToKey(
+        P, key, rest0, m.a, m.pitch, blendWeights, exactIdx, exactPitchIdx, this._sceneGraph,
+      );
+    } else {
+      key._nodeWorld = null;
     }
     return key;
+  }
+
+  getParentWorldTransform(itemId) {
+    const nw = this.lastFrame?.key?._nodeWorld?.[itemId];
+    return nw ? { M: nw.parentM || [1, 0, 0, 1], b: nw.parentB || [0, 0] } : { M: [1, 0, 0, 1], b: [0, 0] };
+  }
+
+  nodeToScreenCanon(nodeId, pt = null, frame = null) {
+    const P = this.P;
+    const fr = frame || this.lastFrame;
+    if (!P || !fr) return pt ? [pt[0], pt[1]] : [0, 0];
+    const nw = fr.key?._nodeWorld?.[nodeId];
+    const p0 = pt || (nw ? nw.worldPivot : (P.nodes || []).find((n) => n.id === nodeId)?.pivot) || [0, 0];
+    const { layerIndices } = getDescendants(P, nodeId);
+    if (layerIndices.length) {
+      return this.layerToScreenCanon(layerIndices[0], p0, fr);
+    }
+    return [p0[0], p0[1]];
+  }
+
+  screenToNodeCanon(nodeId, pt, frame = null) {
+    const P = this.P;
+    const fr = frame || this.lastFrame;
+    if (!P || !fr) return [pt[0], pt[1]];
+    const { layerIndices } = getDescendants(P, nodeId);
+    if (layerIndices.length) {
+      return this.screenToLayerCanon(layerIndices[0], pt, fr);
+    }
+    return [pt[0], pt[1]];
   }
 
   _stepChains(m, dt) {
@@ -1156,7 +1208,7 @@ export class Layer2DEngine {
       move,
       blend: F.blend || null,
       eyes: eyeArr,
-      gaze: F.look || [params.gazeX || 0, params.gazeY || 0],
+      gaze: F.look || [params.gazeX ?? (params.eyeX || 0) * 7, params.gazeY ?? (params.eyeY || 0) * 3],
       over: (Hd && Hd.over) || {},
     };
   }

@@ -23,6 +23,7 @@ import {
   interpolateLayerKeyform,
   smoothGrid,
 } from "./warp_math.js";
+import { hasSceneGraph, buildSceneGraph, wouldCreateCycle } from "./scene_graph.js";
 
 const state = new StudioState();
 const glCanvas = document.getElementById("gl-canvas");
@@ -372,7 +373,31 @@ async function handleAction(act) {
       st.selectLayer(ins);
       st.emit("pack:mutated", { structural: true });
       showToast(`Duplicated ${L.id} → ${nid}`);
+    } else if (act === "add-group" && P) {
+      const selL = st.getSelectedLayer();
+      const selN = st.getSelectedNode();
+      const defName = selL ? `${selL.id} Group` : `Group ${(P.nodes?.length || 0) + 1}`;
+      const name = prompt("New Transform Group name (e.g. Eye R, Head Rig, Hair Group):", defName);
+      if (!name) return;
+      const opts = {};
+      if (selL) {
+        if (selL.parent) opts.parent = selL.parent;
+        opts.adoptChildIds = [selL.id];
+      } else if (selN) {
+        opts.parent = selN.id;
+      }
+      const node = st.addGroupNode(name, opts);
+      if (node) {
+        st.setTool("transform");
+        showToast(`Created group "${node.name}" (${node.id}) — drag gizmo or attach child layers`);
+      }
     } else if (act === "del-layer" && P) {
+      if (st.selectedNodeId && st.getSelectedNode()) {
+        const n = st.getSelectedNode();
+        st.deleteGroupNode(n.id);
+        showToast(`Deleted group ${n.name || n.id} (children promoted)`);
+        return;
+      }
       const L = st.getSelectedLayer();
       if (!L || P.layers.length <= 1) return;
       st.pushUndo("Delete Layer");
@@ -506,7 +531,18 @@ async function handleAction(act) {
       for (const s of P.samples || []) {
         if (s.layers.length !== P.layers.length) errs.push(`Sample ${s.angle} layer count mismatch`);
       }
-      showToast(errs.length ? `Validation issues: ${errs.join("; ")}` : `layer2d/v1 valid: ${P.layers.length} layers, ${P.samples.length} samples, ${(P.chains || []).length} chains`, 4500);
+      if (hasSceneGraph(P)) {
+        const allIds = new Set([...(P.nodes || []).map((n) => n.id), ...(P.layers || []).map((l) => l.id)]);
+        const seenIds = new Set();
+        for (const it of [...(P.nodes || []), ...(P.layers || [])]) {
+          if (seenIds.has(it.id)) errs.push(`Duplicate scene ID ${it.id}`);
+          seenIds.add(it.id);
+          if (it.parent && !allIds.has(it.parent)) errs.push(`${it.id} has unknown parent ${it.parent}`);
+          if (it.parent && wouldCreateCycle(P, it.id, it.parent)) errs.push(`Cycle detected at ${it.id}`);
+        }
+      }
+      const nNodes = (P.nodes || []).length;
+      showToast(errs.length ? `Validation issues: ${errs.join("; ")}` : `layer2d/v1 valid: ${P.layers.length} layers, ${nNodes} groups, ${P.samples.length} samples, ${(P.chains || []).length} chains`, 4500);
     } else if (act === "export-png") {
       const bytes = await engine.capturePreviewPNG(1200, 1600);
       const url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));

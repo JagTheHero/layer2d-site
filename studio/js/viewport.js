@@ -17,7 +17,9 @@ import {
   applyWarpBrush,
   decomposeAffine,
   composeAffine,
+  inv2,
 } from "./warp_math.js";
+import { computeNodeBounds, buildSceneGraph } from "./scene_graph.js";
 
 export class ViewportController {
   constructor(state, engine, overlayCanvas, stageFrame) {
@@ -109,11 +111,45 @@ export class ViewportController {
     return st.getEditTargetForLayer(st.selectedLayerIdx, true);
   }
 
+  _prepareNodeEditTarget() {
+    const st = this.state;
+    if (st.rigTarget.type === "yaw") {
+      st.snapToSample(st.activeSampleIdx);
+      this.engine.syncFrameState(st.params, st.activeSampleIdx, st.snapToPitch ? st.activePitchIdx : null);
+    } else if (st.rigTarget.type === "pitch") {
+      st.snapToPitchSample(st.activePitchIdx);
+      this.engine.syncFrameState(st.params, st.snapToKeyform ? st.activeSampleIdx : null, st.activePitchIdx);
+    } else if (st.rigTarget.type === "blend") {
+      const bs = st.getActiveBlendShape();
+      if (bs && Math.abs(st.params.blend[bs.id] ?? 0) < 0.05) {
+        st.setBlendWeight(bs.id, bs.max ?? 1);
+      }
+      this.engine.syncFrameState(st.params, st.snapToKeyform ? st.activeSampleIdx : null, st.snapToPitch ? st.activePitchIdx : null);
+    }
+    return st.getEditTargetForNode(st.selectedNodeId, true);
+  }
+
   /**
-   * Nudge selected mesh vertices OR selected layer transform by canonical pixels (Arrow keys).
+   * Nudge selected Group Node, mesh vertices, OR selected layer transform by canonical pixels (Arrow keys).
    */
   nudgeSelection(dx, dy) {
     const st = this.state;
+    const node = st.getSelectedNode();
+    if (node) {
+      st.pushUndo("Nudge Transform Group");
+      const target = this._prepareNodeEditTarget();
+      if (!target || !target.obj) return false;
+      const pInv = inv2(this.engine.getParentWorldTransform(node.id).M);
+      const ldx = pInv[0] * dx + pInv[1] * dy;
+      const ldy = pInv[2] * dx + pInv[3] * dy;
+      const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+      target.obj.dt = target.obj.dt || [0, 0];
+      target.obj.dt[0] = +(target.obj.dt[0] + ldx / ws).toFixed(2);
+      target.obj.dt[1] = +(target.obj.dt[1] + ldy / ws).toFixed(2);
+      st.emit("pack:mutated", { structural: false });
+      return true;
+    }
+
     const L = st.getSelectedLayer();
     if (!L || st.lockedIds.has(L.id)) return false;
 
@@ -140,14 +176,17 @@ export class ViewportController {
     st.pushUndo("Nudge Layer");
     const target = this._prepareEditTarget();
     if (!target || !target.obj) return false;
+    const pInv = inv2(this.engine.getParentWorldTransform(L.id).M);
+    const ldx = pInv[0] * dx + pInv[1] * dy;
+    const ldy = pInv[2] * dx + pInv[3] * dy;
     if (target.kind === "yaw") {
-      target.obj.t[0] = +(target.obj.t[0] + dx).toFixed(2);
-      target.obj.t[1] = +(target.obj.t[1] + dy).toFixed(2);
+      target.obj.t[0] = +(target.obj.t[0] + ldx).toFixed(2);
+      target.obj.t[1] = +(target.obj.t[1] + ldy).toFixed(2);
     } else {
       const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
       target.obj.dt = target.obj.dt || [0, 0];
-      target.obj.dt[0] = +(target.obj.dt[0] + dx / ws).toFixed(2);
-      target.obj.dt[1] = +(target.obj.dt[1] + dy / ws).toFixed(2);
+      target.obj.dt[0] = +(target.obj.dt[0] + ldx / ws).toFixed(2);
+      target.obj.dt[1] = +(target.obj.dt[1] + ldy / ws).toFixed(2);
     }
     st.emit("pack:mutated", { structural: false });
     return true;
@@ -194,7 +233,18 @@ export class ViewportController {
       if (best) return best;
     }
 
-    // 4. Transform gizmo handles on selected layer
+    // 4. Transform gizmo handles on selected Group Node OR selected Layer
+    const selNode = st.getSelectedNode();
+    if (selNode && (st.tool === "transform" || st.tool === "select")) {
+      const nbox = this._nodeBoxScreen(selNode);
+      if (nbox) {
+        if (Math.hypot(sx - nbox.rotHandle[0], sy - nbox.rotHandle[1]) <= 10) return { kind: "node_rot", nodeId: selNode.id };
+        for (let i = 0; i < 4; i++) {
+          if (Math.hypot(sx - nbox.corners[i][0], sy - nbox.corners[i][1]) <= 9) return { kind: "node_scale", nodeId: selNode.id, corner: i };
+        }
+      }
+    }
+
     if (L && SL && (st.tool === "transform" || st.tool === "select")) {
       const box = this._layerBoxScreen(L, lIdx, SL);
       if (box) {
@@ -273,6 +323,48 @@ export class ViewportController {
         this.overlay.setPointerCapture(e.pointerId);
         return;
       }
+      if (hit.kind === "node_rot") {
+        const node = st.getSelectedNode();
+        if (!node) return;
+        st.pushUndo("Rotate Transform Group");
+        const target = this._prepareNodeEditTarget();
+        if (!target || !target.obj) return;
+        const nw = this.engine.lastFrame?.key?._nodeWorld?.[node.id];
+        const pivot = nw ? nw.worldPivot : (node.pivot || [P.canvas[0] * 0.5, P.canvas[1] * 0.5]);
+        const pNode = this.engine.screenToNodeCanon(node.id, canon);
+        const ang0 = Math.atan2(pNode[1] - pivot[1], pNode[0] - pivot[0]);
+        this.drag = {
+          type: "node_rot",
+          nodeId: node.id,
+          target,
+          origDRot: target.obj.dRot || 0,
+          pivot: [...pivot],
+          ang0,
+        };
+        this.overlay.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (hit.kind === "node_scale") {
+        const node = st.getSelectedNode();
+        if (!node) return;
+        st.pushUndo("Scale Transform Group");
+        const target = this._prepareNodeEditTarget();
+        if (!target || !target.obj) return;
+        const nw = this.engine.lastFrame?.key?._nodeWorld?.[node.id];
+        const pivot = nw ? nw.worldPivot : (node.pivot || [P.canvas[0] * 0.5, P.canvas[1] * 0.5]);
+        const pNode = this.engine.screenToNodeCanon(node.id, canon);
+        const d0 = Math.max(10, Math.hypot(pNode[0] - pivot[0], pNode[1] - pivot[1]));
+        this.drag = {
+          type: "node_scale",
+          nodeId: node.id,
+          target,
+          origDScale: target.obj.dScale ? [...target.obj.dScale] : [0, 0],
+          pivot: [...pivot],
+          d0,
+        };
+        this.overlay.setPointerCapture(e.pointerId);
+        return;
+      }
       if (hit.kind === "rot") {
         const L = st.getSelectedLayer();
         if (!L || st.lockedIds.has(L.id)) return;
@@ -340,6 +432,28 @@ export class ViewportController {
 
     // Transform / Select tool
     if (st.tool === "transform" || st.tool === "select") {
+      // If a Transform Group is selected and pointer is inside its gizmo box (in Transform tool), drag the Group!
+      const selNode = st.getSelectedNode();
+      if (selNode && st.tool === "transform") {
+        const nbox = this._nodeBoxScreen(selNode);
+        if (nbox && this._pointInScreenBox(sx, sy, nbox)) {
+          this.drag = {
+            type: "node_translate",
+            nodeId: selNode.id,
+            startX: sx,
+            startY: sy,
+            startCanon: canon,
+            undoPushed: false,
+            target: null,
+            startNode: null,
+            origT: null,
+            parentInv: null,
+          };
+          this.overlay.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+
       const picked = this.engine.pickLayerAt(
         canon[0], canon[1],
         st.params.a,
@@ -419,6 +533,54 @@ export class ViewportController {
       return;
     }
 
+    if (this.drag.type === "node_translate") {
+      if (!this.drag.undoPushed) {
+        if (Math.hypot(sx - this.drag.startX, sy - this.drag.startY) < 2) return;
+        st.pushUndo("Move Transform Group");
+        const target = this._prepareNodeEditTarget();
+        if (!target || !target.obj) return;
+        this.drag.target = target;
+        this.drag.startNode = this.engine.screenToNodeCanon(this.drag.nodeId, this.drag.startCanon);
+        this.drag.origT = [...(target.obj.dt || [0, 0])];
+        this.drag.parentInv = inv2(this.engine.getParentWorldTransform(this.drag.nodeId).M);
+        this.drag.undoPushed = true;
+      }
+      const target = this.drag.target;
+      const currNode = this.engine.screenToNodeCanon(this.drag.nodeId, canon);
+      const dxW = currNode[0] - this.drag.startNode[0];
+      const dyW = currNode[1] - this.drag.startNode[1];
+      const pInv = this.drag.parentInv || [1, 0, 0, 1];
+      const dx = pInv[0] * dxW + pInv[1] * dyW;
+      const dy = pInv[2] * dxW + pInv[3] * dyW;
+      const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+      target.obj.dt = [+(this.drag.origT[0] + dx / ws).toFixed(2), +(this.drag.origT[1] + dy / ws).toFixed(2)];
+      st.emit("pack:mutated", { structural: false });
+      return;
+    }
+
+    if (this.drag.type === "node_rot") {
+      const target = this.drag.target;
+      const currNode = this.engine.screenToNodeCanon(this.drag.nodeId, canon);
+      const ang = Math.atan2(currNode[1] - this.drag.pivot[1], currNode[0] - this.drag.pivot[0]);
+      const deltaDeg = ((ang - this.drag.ang0) * 180) / Math.PI;
+      const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+      target.obj.dRot = +(this.drag.origDRot + deltaDeg / ws).toFixed(3);
+      st.emit("pack:mutated", { structural: false });
+      return;
+    }
+
+    if (this.drag.type === "node_scale") {
+      const target = this.drag.target;
+      const currNode = this.engine.screenToNodeCanon(this.drag.nodeId, canon);
+      const d = Math.max(10, Math.hypot(currNode[0] - this.drag.pivot[0], currNode[1] - this.drag.pivot[1]));
+      const f = d / this.drag.d0;
+      const ws = Math.max(0.05, Math.abs(target.weightScale || 1));
+      const ds = (f - 1) / ws;
+      target.obj.dScale = [+(this.drag.origDScale[0] + ds).toFixed(4), +(this.drag.origDScale[1] + ds).toFixed(4)];
+      st.emit("pack:mutated", { structural: false });
+      return;
+    }
+
     const L = st.getSelectedLayer();
     const lIdx = st.selectedLayerIdx;
     if (!L || lIdx < 0) return;
@@ -432,12 +594,16 @@ export class ViewportController {
         this.drag.target = target;
         this.drag.startLayer = this.engine.screenToLayerCanon(lIdx, this.drag.startCanon);
         this.drag.origT = target.kind === "yaw" ? [...target.obj.t] : [...(target.obj.dt || [0, 0])];
+        this.drag.parentInv = inv2(this.engine.getParentWorldTransform(L.id).M);
         this.drag.undoPushed = true;
       }
       const target = this.drag.target;
       const currLayer = this.engine.screenToLayerCanon(lIdx, canon);
-      const dx = currLayer[0] - this.drag.startLayer[0];
-      const dy = currLayer[1] - this.drag.startLayer[1];
+      const dxW = currLayer[0] - this.drag.startLayer[0];
+      const dyW = currLayer[1] - this.drag.startLayer[1];
+      const pInv = this.drag.parentInv || [1, 0, 0, 1];
+      const dx = pInv[0] * dxW + pInv[1] * dyW;
+      const dy = pInv[2] * dxW + pInv[3] * dyW;
       if (target.kind === "yaw") {
         target.obj.t[0] = +(this.drag.origT[0] + dx).toFixed(2);
         target.obj.t[1] = +(this.drag.origT[1] + dy).toFixed(2);
@@ -571,7 +737,50 @@ export class ViewportController {
     if (P.motion.shoulder?.armR) list.push({ id: "shR", label: "Shoulder R", x: P.motion.shoulder.armR[0], y: P.motion.shoulder.armR[1], set: (x, y) => { P.motion.shoulder.armR[0] = x; P.motion.shoulder.armR[1] = y; } });
     if (P.motion.shoulder?.armL) list.push({ id: "shL", label: "Shoulder L", x: P.motion.shoulder.armL[0], y: P.motion.shoulder.armL[1], set: (x, y) => { P.motion.shoulder.armL[0] = x; P.motion.shoulder.armL[1] = y; } });
     if (P.tail && P.tail.pivot) list.push({ id: "tail", label: "Tail Pivot", x: P.tail.pivot[0], y: P.tail.pivot[1], set: (x, y) => { P.tail.pivot[0] = x; P.tail.pivot[1] = y; } });
+    for (const node of P.nodes || []) {
+      const pv = node.pivot || [P.canvas[0] * 0.5, P.canvas[1] * 0.5];
+      list.push({
+        id: `node_${node.id}`,
+        label: `◆ ${node.name || node.id}`,
+        isGroup: true,
+        x: pv[0],
+        y: pv[1],
+        set: (x, y) => { node.pivot = [x, y]; },
+      });
+    }
     return list;
+  }
+
+  _nodeBoxScreen(node) {
+    const P = this.state.pack;
+    const fr = this.engine.lastFrame;
+    if (!P || !fr || !node) return null;
+    const b = computeNodeBounds(P, node.id, fr.key, fr.key._nodeWorld);
+    if (!b) return null;
+    const toScr = (cx, cy) => {
+      const sp = this.engine.nodeToScreenCanon(node.id, [cx, cy], fr);
+      return this.canonToScreen(sp[0], sp[1]);
+    };
+    const corners = [
+      toScr(b.x0, b.y0),
+      toScr(b.x1, b.y0),
+      toScr(b.x1, b.y1),
+      toScr(b.x0, b.y1),
+    ];
+    const topMid = toScr((b.x0 + b.x1) * 0.5, b.y0);
+    const center = toScr((b.x0 + b.x1) * 0.5, (b.y0 + b.y1) * 0.5);
+    const pivot = toScr(b.pivot[0], b.pivot[1]);
+    const vx = topMid[0] - center[0], vy = topMid[1] - center[1];
+    const vl = Math.hypot(vx, vy) || 1;
+    const rotHandle = [topMid[0] + (vx / vl) * 26, topMid[1] + (vy / vl) * 26];
+    return { corners, topMid, center, pivot, rotHandle };
+  }
+
+  _pointInScreenBox(sx, sy, box) {
+    if (!box) return false;
+    if (box.pivot && Math.hypot(sx - box.pivot[0], sy - box.pivot[1]) <= 18) return true;
+    const xs = box.corners.map((c) => c[0]), ys = box.corners.map((c) => c[1]);
+    return sx >= Math.min(...xs) - 6 && sx <= Math.max(...xs) + 6 && sy >= Math.min(...ys) - 6 && sy <= Math.max(...ys) + 6;
   }
 
   _layerBoxScreen(L, layerIdx, SL) {
@@ -804,6 +1013,89 @@ export class ViewportController {
       }
     }
 
+    // 3b. Selected Scene Graph Transform Group Gizmo (Amber/Gold)
+    const selNode = st.getSelectedNode();
+    if (selNode && st.mode !== "animate" && st.mode !== "expressions") {
+      const nbox = this._nodeBoxScreen(selNode);
+      if (nbox) {
+        ctx.save();
+        // Dashed parent -> direct child connector lines
+        const { byId, childrenOf } = buildSceneGraph(P);
+        const kids = childrenOf.get(selNode.id) || [];
+        const nwMap = this.engine.lastFrame?.key?._nodeWorld;
+        ctx.strokeStyle = "rgba(245, 166, 35, 0.45)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        for (const cid of kids) {
+          const it = byId.get(cid);
+          const cw = nwMap && nwMap[cid];
+          if (!it || !cw || !cw.worldPivot) continue;
+          const cp = it.kind === "layer"
+            ? this.canonToScreen(...this.engine.layerToScreenCanon(it.idx, cw.worldPivot))
+            : this.canonToScreen(...this.engine.nodeToScreenCanon(cid, cw.worldPivot));
+          ctx.beginPath();
+          ctx.moveTo(nbox.pivot[0], nbox.pivot[1]);
+          ctx.lineTo(cp[0], cp[1]);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(cp[0], cp[1], 3, 0, Math.PI * 2);
+          ctx.fillStyle = "#f5a623";
+          ctx.fill();
+        }
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = st.rigTarget.type === "blend" ? "rgba(176, 118, 255, 0.92)" : "rgba(245, 166, 35, 0.92)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(nbox.corners[0][0], nbox.corners[0][1]);
+        for (let i = 1; i < 4; i++) ctx.lineTo(nbox.corners[i][0], nbox.corners[i][1]);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Rotation handle
+        ctx.beginPath();
+        ctx.moveTo(nbox.topMid[0], nbox.topMid[1]);
+        ctx.lineTo(nbox.rotHandle[0], nbox.rotHandle[1]);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(nbox.rotHandle[0], nbox.rotHandle[1], 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = "#f5a623";
+        ctx.fill();
+        ctx.strokeStyle = "#f2f3f5";
+        ctx.stroke();
+
+        // Corner scale handles
+        for (const [cx, cy] of nbox.corners) {
+          ctx.fillStyle = "#f2f3f5";
+          ctx.fillRect(cx - 3.5, cy - 3.5, 7, 7);
+          ctx.strokeStyle = "#f5a623";
+          ctx.strokeRect(cx - 3.5, cy - 3.5, 7, 7);
+        }
+
+        // Amber diamond pivot marker + label
+        const [px, py] = nbox.pivot;
+        ctx.fillStyle = "#f5a623";
+        ctx.strokeStyle = "#0c0d10";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(px, py - 6.5);
+        ctx.lineTo(px + 6.5, py);
+        ctx.lineTo(px, py + 6.5);
+        ctx.lineTo(px - 6.5, py);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.font = '10.5px "JetBrains Mono", monospace';
+        ctx.strokeStyle = "rgba(12, 13, 16, 0.88)";
+        ctx.lineWidth = 3;
+        ctx.lineJoin = "round";
+        ctx.strokeText(`◆ ${selNode.name || selNode.id}`, px + 10, py + 3.5);
+        ctx.fillStyle = "#ffd88a";
+        ctx.fillText(`◆ ${selNode.name || selNode.id}`, px + 10, py + 3.5);
+        ctx.restore();
+      }
+    }
+
     // 4. Marquee Box-Select Rectangle
     if (this.drag && this.drag.type === "marquee") {
       const x = Math.min(this.drag.startX, this.drag.curX);
@@ -826,6 +1118,23 @@ export class ViewportController {
       ctx.save();
       for (const pv of pivots) {
         const [px, py] = this.canonToScreen(pv.x, pv.y);
+        if (pv.isGroup) {
+          ctx.fillStyle = "#f5a623";
+          ctx.strokeStyle = "#0c0d10";
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(px, py - 5.5);
+          ctx.lineTo(px + 5.5, py);
+          ctx.lineTo(px, py + 5.5);
+          ctx.lineTo(px - 5.5, py);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.font = '10.5px "JetBrains Mono", monospace';
+          ctx.fillStyle = "rgba(255, 216, 138, 0.9)";
+          ctx.fillText(pv.label, px + 8, py + 3);
+          continue;
+        }
         ctx.fillStyle = pv.id === "tail" ? "#be1e3c" : "#13151b";
         ctx.strokeStyle = "#f2f3f5";
         ctx.lineWidth = 1.4;

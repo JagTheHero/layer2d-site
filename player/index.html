@@ -1171,17 +1171,180 @@ function pitchAt(pitch) {
   }
   return out;
 }
+let SCENE_GRAPH = null, REST_KEY0 = null;
+function hasSceneGraph(pack) {
+  if (!pack) return false;
+  if (Array.isArray(pack.nodes) && pack.nodes.length > 0) return true;
+  if (Array.isArray(pack.layers)) { for (const L of pack.layers) if (L && L.parent) return true; }
+  return false;
+}
+function sgMul2m(A, B) {
+  return [A[0] * B[0] + A[1] * B[2], A[0] * B[1] + A[1] * B[3], A[2] * B[0] + A[3] * B[2], A[2] * B[1] + A[3] * B[3]];
+}
+function sgInv2(A) {
+  const d = A[0] * A[3] - A[1] * A[2];
+  if (Math.abs(d) < 1e-8) return [1, 0, 0, 1];
+  return [A[3] / d, -A[1] / d, -A[2] / d, A[0] / d];
+}
+function buildSceneGraph(pack) {
+  if (!hasSceneGraph(pack)) return null;
+  const byId = new Map();
+  for (const n of pack.nodes || []) if (n && n.id) byId.set(n.id, { kind: "node", id: n.id, obj: n });
+  for (let i = 0; i < (pack.layers || []).length; i++) {
+    const L = pack.layers[i];
+    if (L && L.id) byId.set(L.id, { kind: "layer", id: L.id, idx: i, obj: L });
+  }
+  const validParent = new Map();
+  for (const [id, item] of byId.entries()) {
+    const pid = item.obj.parent || null;
+    if (pid && byId.has(pid) && pid !== id) {
+      const seen = new Set([id]);
+      let cur = pid, cyclic = false;
+      while (cur) {
+        if (seen.has(cur)) { cyclic = true; break; }
+        seen.add(cur);
+        const pi = byId.get(cur);
+        cur = pi && pi.obj.parent ? pi.obj.parent : null;
+      }
+      if (!cyclic) { validParent.set(id, pid); continue; }
+    }
+    validParent.set(id, null);
+  }
+  const topoOrder = [], visited = new Set();
+  const visit = (id) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const pid = validParent.get(id);
+    if (pid && !visited.has(pid)) visit(pid);
+    topoOrder.push(id);
+  };
+  for (const id of byId.keys()) visit(id);
+  return { byId, validParent, topoOrder };
+}
+function evalAllNodeDeltas(pack, a, pitch, bw) {
+  const nodes = (pack && pack.nodes) || [], out = Object.create(null);
+  if (!nodes.length) return out;
+  const addD = (acc, d, w) => {
+    if (!d || Math.abs(w) < 1e-6) return;
+    if (d.dt) { acc.dt[0] += (d.dt[0] || 0) * w; acc.dt[1] += (d.dt[1] || 0) * w; }
+    if (d.dRot) acc.dRot += d.dRot * w;
+    if (d.dScale) { acc.dScale[0] += (d.dScale[0] || 0) * w; acc.dScale[1] += (d.dScale[1] || 0) * w; }
+    if (d.dOp) acc.dOp += d.dOp * w;
+  };
+  const lerpD = (da, db, f) => {
+    if (!da && !db) return null;
+    const x = da || {}, y = db || {}, dt0 = x.dt || [0, 0], dt1 = y.dt || [0, 0], ds0 = x.dScale || [0, 0], ds1 = y.dScale || [0, 0];
+    return {
+      dt: [lerp(dt0[0] || 0, dt1[0] || 0, f), lerp(dt0[1] || 0, dt1[1] || 0, f)],
+      dRot: lerp(x.dRot || 0, y.dRot || 0, f),
+      dScale: [lerp(ds0[0] || 0, ds1[0] || 0, f), lerp(ds0[1] || 0, ds1[1] || 0, f)],
+      dOp: lerp(x.dOp || 0, y.dOp || 0, f),
+    };
+  };
+  for (const n of nodes) out[n.id] = { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+  const S = pack.samples || [];
+  if (S.length) {
+    const turn = (pack.head && pack.head.turn) || { R: -0.22, L: 0.22 };
+    const ang = a < 0 ? -a * turn.R : a * turn.L;
+    let i = 0; while (i + 1 < S.length && S[i + 1].angle < ang) i++;
+    const s0 = S[i], s1 = S[Math.min(i + 1, S.length - 1)];
+    const f = s1.angle === s0.angle ? 0 : Math.max(0, Math.min(1, (ang - s0.angle) / (s1.angle - s0.angle)));
+    for (const n of nodes) {
+      const d = lerpD(s0.nodes && s0.nodes[n.id], s1.nodes && s1.nodes[n.id], f);
+      if (d) addD(out[n.id], d, 1);
+    }
+  }
+  const PS = pack.pitchSamples || [];
+  if (PS.length) {
+    const pVal = Math.max(-1, Math.min(1, pitch || 0));
+    if (PS.length === 1) {
+      const s = PS[0];
+      for (const n of nodes) { const d = (s.nodes && s.nodes[n.id]) || (s.layers && s.layers[n.id]); if (d) addD(out[n.id], d, 1); }
+    } else {
+      let i = 0; while (i + 1 < PS.length && PS[i + 1].pitch < pVal) i++;
+      const s0 = PS[i], s1 = PS[Math.min(i + 1, PS.length - 1)];
+      const f = s1.pitch === s0.pitch ? 0 : Math.max(0, Math.min(1, (pVal - s0.pitch) / (s1.pitch - s0.pitch)));
+      for (const n of nodes) {
+        const d = lerpD((s0.nodes && s0.nodes[n.id]) || (s0.layers && s0.layers[n.id]), (s1.nodes && s1.nodes[n.id]) || (s1.layers && s1.layers[n.id]), f);
+        if (d) addD(out[n.id], d, 1);
+      }
+    }
+  }
+  if (bw) {
+    for (const bs of pack.blendShapes || []) {
+      const w = bw[bs.id];
+      if (!w) continue;
+      for (const n of nodes) {
+        const d = (bs.nodes && bs.nodes[n.id]) || (bs.layers && bs.layers[n.id]);
+        if (d) addD(out[n.id], d, w);
+      }
+    }
+  }
+  return out;
+}
+function applySceneGraphToKey(key, a, pitch, bw) {
+  if (!SCENE_GRAPH) return;
+  const { byId, validParent, topoOrder } = SCENE_GRAPH;
+  const nodeDeltas = evalAllNodeDeltas(P, a, pitch, bw);
+  const world = Object.create(null);
+  const ID_M = [1, 0, 0, 1], ID_B = [0, 0];
+  const rest0 = REST_KEY0 || keyAt(0);
+  for (const id of topoOrder) {
+    const item = byId.get(id);
+    if (!item) continue;
+    const pid = validParent.get(id);
+    const pw = pid && world[pid] ? world[pid] : null;
+    const pM = pw ? pw.M : ID_M, pB = pw ? pw.b : ID_B, pOp = pw ? pw.op : 1;
+    if (item.kind === "node") {
+      const node = item.obj;
+      const pv = node.pivot || [P.canvas[0] * 0.5, P.canvas[1] * 0.5];
+      const d = nodeDeltas[id] || { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+      const sx = Math.max(0.05, 1 + (d.dScale[0] || 0)), sy = Math.max(0.05, 1 + (d.dScale[1] || 0));
+      const r = (d.dRot || 0) * Math.PI / 180, co = Math.cos(r), si = Math.sin(r);
+      const Mloc = [co * sx, -si * sy, si * sx, co * sy];
+      const bLoc = [pv[0] + (d.dt[0] || 0) - (Mloc[0] * pv[0] + Mloc[1] * pv[1]), pv[1] + (d.dt[1] || 0) - (Mloc[2] * pv[0] + Mloc[3] * pv[1])];
+      const M = pw ? sgMul2m(pM, Mloc) : Mloc;
+      const b = pw ? [pM[0] * bLoc[0] + pM[1] * bLoc[1] + pB[0], pM[2] * bLoc[0] + pM[3] * bLoc[1] + pB[1]] : bLoc;
+      const opLoc = Math.max(0, Math.min(1, 1 + (d.dOp || 0)));
+      const op = node.inheritOp !== false ? Math.max(0, Math.min(1, pOp * opLoc)) : opLoc;
+      world[id] = { M, b, op };
+    } else {
+      const idx = item.idx, cur = key.layers[idx];
+      if (!cur) continue;
+      const r0 = rest0 && rest0.layers && rest0.layers[idx];
+      const A0 = (r0 && r0.A) || ID_M, t0 = (r0 && r0.t) || cur.t, op0 = (r0 && r0.op !== undefined) ? r0.op : 1;
+      const Aown = cur.A || ID_M, town = cur.t || [0, 0];
+      const Mloc = sgMul2m(Aown, sgInv2(A0));
+      const bLoc = [town[0] - (Mloc[0] * t0[0] + Mloc[1] * t0[1]), town[1] - (Mloc[2] * t0[0] + Mloc[3] * t0[1])];
+      const opLoc = op0 > 1e-4 ? Math.max(0, Math.min(1, (cur.op ?? 1) / op0)) : (cur.op ?? 1);
+      if (pw) {
+        key.layers[idx] = {
+          ...cur,
+          A: sgMul2m(pM, Aown),
+          t: [pM[0] * town[0] + pM[1] * town[1] + pB[0], pM[2] * town[0] + pM[3] * town[1] + pB[1]],
+          op: Math.max(0, Math.min(1, (cur.op ?? 1) * pOp)),
+        };
+      }
+      const M = pw ? sgMul2m(pM, Mloc) : Mloc;
+      const b = pw ? [pM[0] * bLoc[0] + pM[1] * bLoc[1] + pB[0], pM[2] * bLoc[0] + pM[3] * bLoc[1] + pB[1]] : bLoc;
+      world[id] = { M, b, op: Math.max(0, Math.min(1, pOp * opLoc)) };
+    }
+  }
+}
 function applyPitchAndBlend(key, f, fc) {
   const pitchD = pitchAt(f.pitch || 0);
   const BS = (P && P.blendShapes) || [];
   let bw = null;
   if (BS.length) {
     const fb = (fc && fc.blend) || {};
+    const gz = (fc && fc.gaze) || [0, 0];
     for (const bs of BS) {
       const lo = bs.min ?? 0, hi = bs.max ?? 1;
       let w = (bs.default ?? 0) + (fb[bs.id] || 0);
       if (bs.bind === "mouthOpen") w += ctl.vowel ? 1 : 0;
       else if (bs.bind === "eyeOpen") w += Math.max(0, Math.min(1, 1 - (ctl.eyes ?? 1)));
+      else if (bs.bind === "eyeX") w += Math.max(-1, Math.min(1, (gz[0] || 0) / 7));
+      else if (bs.bind === "eyeY") w += Math.max(-1, Math.min(1, (gz[1] || 0) / 3));
       else if (bs.bind === "breath") w += (f.breath || 1) - 1;
       else if (bs.bind === "angleX") w += f.a || 0;
       else if (bs.bind === "angleY") w += f.pitch || 0;
@@ -1190,19 +1353,21 @@ function applyPitchAndBlend(key, f, fc) {
       if (Math.abs(w) > 1e-5) { (bw ||= Object.create(null))[bs.id] = w; }
     }
   }
-  if (!pitchD && !bw) return;
-  for (let i = 0; i < P.layers.length; i++) {
-    const id = P.layers[i].id;
-    let cur = key.layers[i];
-    if (pitchD && pitchD[id]) cur = applyLayerDelta(cur, pitchD[id], 1.0);
-    if (bw) {
-      for (const bs of BS) {
-        const w = bw[bs.id];
-        if (w && bs.layers && bs.layers[id]) cur = applyLayerDelta(cur, bs.layers[id], w);
+  if (pitchD || bw) {
+    for (let i = 0; i < P.layers.length; i++) {
+      const id = P.layers[i].id;
+      let cur = key.layers[i];
+      if (pitchD && pitchD[id]) cur = applyLayerDelta(cur, pitchD[id], 1.0);
+      if (bw) {
+        for (const bs of BS) {
+          const w = bw[bs.id];
+          if (w && bs.layers && bs.layers[id]) cur = applyLayerDelta(cur, bs.layers[id], w);
+        }
       }
+      key.layers[i] = cur;
     }
-    key.layers[i] = cur;
   }
+  if (SCENE_GRAPH) applySceneGraphToKey(key, f.a || 0, f.pitch || 0, bw);
 }
 function keyAt(a) {
   const n = P.samples.length - 1, k = Math.min(n - 1e-6, Math.max(0, (a + 1) / 2 * n)), i = Math.floor(k), f = k - i;
@@ -2670,6 +2835,8 @@ async function start(l2dBuffer = null, l2dName = null) {
     P.layers.splice(i, 0, L); P.samples.forEach((s, k) => s.layers.splice(i, 0, st.samples[k][j]));
   });
   for (const L of P.layers) if (L.kind === 0 && L.head) L.pitchGroup = pitchGroup(L.id);
+  SCENE_GRAPH = buildSceneGraph(P);
+  REST_KEY0 = SCENE_GRAPH ? keyAt(0) : null;
   if (!prog) {
     prog = gl.createProgram();
     gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));

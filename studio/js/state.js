@@ -9,6 +9,7 @@
  */
 
 import { lerpGrids } from "./warp_math.js";
+import { wouldCreateCycle } from "./scene_graph.js";
 
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
@@ -120,11 +121,13 @@ export class StudioState {
 
     // Selection
     this.selectedLayerIdx = -1;
+    this.selectedNodeId = null;     // active Transform Group / Deformer node ID in pack.nodes[]
     this.selectedChainIdx = -1;
     this.selectedExprName = null;
     this.selectedHoldName = null;
     this.selectedVerts = new Set(); // selected forward-mesh vertex indices (iy * gd + ix)
     this.selectedFolderCollapsed = new Set();
+    this.collapsedNodes = new Set(); // collapsed parent nodes in Scene Graph outliner
     this.hiddenIds = new Set();
     this.lockedIds = new Set();
     this.soloId = null;
@@ -136,6 +139,8 @@ export class StudioState {
       pitch: 0,       // -1 .. +1 (displayed as -30.0° .. +30.0°)
       roll: 0,        // radians (-0.35 .. +0.35)
       eyes: 1.0,      // 0 .. 1.3
+      eyeX: 0.0,      // -1 .. +1 (live gaze X & Live: Eye Look X blend shape preview)
+      eyeY: 0.0,      // -1 .. +1 (live gaze Y & Live: Eye Look Y blend shape preview)
       vowel: null,    // null | "A" | "I" | "U" | "E" | "O"
       tailWag: 1.0,
       tailSway: 0.0,
@@ -221,6 +226,8 @@ export class StudioState {
     this.hiddenIds.clear();
     this.lockedIds.clear();
     this.selectedVerts.clear();
+    this.collapsedNodes.clear();
+    this.selectedNodeId = null;
     this.soloId = null;
 
     // Default to center (front) yaw sample
@@ -238,6 +245,8 @@ export class StudioState {
     this.params.pitch = 0;
     this.params.roll = 0;
     this.params.eyes = 1.0;
+    this.params.eyeX = 0.0;
+    this.params.eyeY = 0.0;
     this.params.vowel = null;
     this.params.face = null;
     this.params.hold = null;
@@ -285,6 +294,7 @@ export class StudioState {
       pack: deepClone({ ...this.pack, lidx: undefined }),
       studio: deepClone(this.studio),
       selectedLayerIdx: this.selectedLayerIdx,
+      selectedNodeId: this.selectedNodeId,
       selectedChainIdx: this.selectedChainIdx,
       rigTarget: deepClone(this.rigTarget),
     };
@@ -302,6 +312,7 @@ export class StudioState {
       pack: deepClone({ ...this.pack, lidx: undefined }),
       studio: deepClone(this.studio),
       selectedLayerIdx: this.selectedLayerIdx,
+      selectedNodeId: this.selectedNodeId,
       selectedChainIdx: this.selectedChainIdx,
       rigTarget: deepClone(this.rigTarget),
     });
@@ -309,6 +320,7 @@ export class StudioState {
     this.pack = prev.pack;
     this.studio = prev.studio;
     this.selectedLayerIdx = Math.min(prev.selectedLayerIdx, this.pack.layers.length - 1);
+    this.selectedNodeId = prev.selectedNodeId && (this.pack.nodes || []).some((n) => n.id === prev.selectedNodeId) ? prev.selectedNodeId : null;
     this.selectedChainIdx = Math.min(prev.selectedChainIdx, (this.pack.chains || []).length - 1);
     if (prev.rigTarget) this.rigTarget = prev.rigTarget;
     this.selectedVerts.clear();
@@ -327,6 +339,7 @@ export class StudioState {
       pack: deepClone({ ...this.pack, lidx: undefined }),
       studio: deepClone(this.studio),
       selectedLayerIdx: this.selectedLayerIdx,
+      selectedNodeId: this.selectedNodeId,
       selectedChainIdx: this.selectedChainIdx,
       rigTarget: deepClone(this.rigTarget),
     });
@@ -334,6 +347,7 @@ export class StudioState {
     this.pack = next.pack;
     this.studio = next.studio;
     this.selectedLayerIdx = Math.min(next.selectedLayerIdx, this.pack.layers.length - 1);
+    this.selectedNodeId = next.selectedNodeId && (this.pack.nodes || []).some((n) => n.id === next.selectedNodeId) ? next.selectedNodeId : null;
     this.selectedChainIdx = Math.min(next.selectedChainIdx, (this.pack.chains || []).length - 1);
     if (next.rigTarget) this.rigTarget = next.rigTarget;
     this.selectedVerts.clear();
@@ -345,10 +359,204 @@ export class StudioState {
     return true;
   }
 
-  /* ---------- Convenience Accessors ---------- */
+  /* ---------- Convenience Accessors & Scene Graph ---------- */
   getSelectedLayer() {
     if (!this.pack || this.selectedLayerIdx < 0 || this.selectedLayerIdx >= this.pack.layers.length) return null;
     return this.pack.layers[this.selectedLayerIdx];
+  }
+
+  getSelectedNode() {
+    if (!this.pack || !this.selectedNodeId || !Array.isArray(this.pack.nodes)) return null;
+    return this.pack.nodes.find((n) => n.id === this.selectedNodeId) || null;
+  }
+
+  selectNode(nodeId) {
+    if (!nodeId) {
+      this.selectedNodeId = null;
+      this.emit("selection:changed");
+      return;
+    }
+    this.selectedNodeId = nodeId;
+    this.selectedLayerIdx = -1;
+    this.selectedVerts.clear();
+    this.emit("selection:changed");
+  }
+
+  addGroupNode(name, opts = {}) {
+    const P = this.pack;
+    if (!P) return null;
+    this.pushUndo("Add Transform Group");
+    P.nodes = P.nodes || [];
+    const clean = (name || "Group").trim() || "Group";
+    const used = new Set([
+      ...P.nodes.map((n) => n.id),
+      ...(P.layers || []).map((l) => l.id),
+    ]);
+    const rawSlug = clean.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    const baseId = opts.id || ("N_" + (rawSlug || "Group"));
+    let id = baseId, k = 2;
+    while (used.has(id)) id = `${baseId}_${k++}`;
+
+    let pivot = opts.pivot;
+    if (!pivot) {
+      const selL = this.getSelectedLayer();
+      const selSL = this.getActiveSampleLayer();
+      const selN = this.getSelectedNode();
+      if (selSL && selSL.t) pivot = [Math.round(selSL.t[0]), Math.round(selSL.t[1])];
+      else if (selN && selN.pivot) pivot = [Math.round(selN.pivot[0]), Math.round(selN.pivot[1])];
+      else if (P.head?.centre) pivot = [Math.round(P.head.centre[0]), Math.round(P.head.centre[1])];
+      else pivot = [Math.round(P.canvas[0] * 0.5), Math.round(P.canvas[1] * 0.5)];
+    }
+
+    const node = {
+      id,
+      name: clean,
+      pivot: [Math.round(pivot[0]), Math.round(pivot[1])],
+      inheritOp: opts.inheritOp !== false,
+    };
+    if (opts.parent && !wouldCreateCycle(P, id, opts.parent)) {
+      node.parent = opts.parent;
+    }
+    P.nodes.push(node);
+
+    if (Array.isArray(opts.adoptChildIds)) {
+      for (const cid of opts.adoptChildIds) {
+        if (!cid || cid === id) continue;
+        const childLayer = P.layers.find((l) => l.id === cid);
+        const childNode = P.nodes.find((n) => n.id === cid);
+        const target = childLayer || childNode;
+        if (target && !wouldCreateCycle(P, cid, id)) {
+          target.parent = id;
+        }
+      }
+    }
+
+    this.selectedNodeId = id;
+    this.selectedLayerIdx = -1;
+    this.selectedVerts.clear();
+    this.emit("pack:mutated", { structural: true });
+    this.emit("selection:changed");
+    return node;
+  }
+
+  deleteGroupNode(nodeId = this.selectedNodeId) {
+    const P = this.pack;
+    if (!P || !Array.isArray(P.nodes) || !nodeId) return false;
+    const idx = P.nodes.findIndex((n) => n.id === nodeId);
+    if (idx < 0) return false;
+    this.pushUndo("Delete Transform Group");
+    const removed = P.nodes[idx];
+    const grandParent = removed.parent || null;
+    P.nodes.splice(idx, 1);
+
+    // Reparent direct children cleanly to grandparent (or Root) so nothing breaks
+    for (const n of P.nodes) {
+      if (n.parent === nodeId) {
+        if (grandParent) n.parent = grandParent;
+        else delete n.parent;
+      }
+    }
+    for (const L of P.layers || []) {
+      if (L.parent === nodeId) {
+        if (grandParent) L.parent = grandParent;
+        else delete L.parent;
+      }
+    }
+    // Remove node deltas across samples, pitchSamples, blendShapes
+    for (const s of P.samples || []) {
+      if (s.nodes && nodeId in s.nodes) {
+        delete s.nodes[nodeId];
+        if (!Object.keys(s.nodes).length) delete s.nodes;
+      }
+    }
+    for (const ps of P.pitchSamples || []) {
+      if (ps.nodes && nodeId in ps.nodes) {
+        delete ps.nodes[nodeId];
+        if (!Object.keys(ps.nodes).length) delete ps.nodes;
+      }
+    }
+    for (const bs of P.blendShapes || []) {
+      if (bs.nodes && nodeId in bs.nodes) {
+        delete bs.nodes[nodeId];
+        if (!Object.keys(bs.nodes).length) delete bs.nodes;
+      }
+    }
+    if (!P.nodes.length) delete P.nodes;
+
+    if (this.selectedNodeId === nodeId) {
+      this.selectedNodeId = null;
+      this.selectedLayerIdx = P.layers.length ? 0 : -1;
+    }
+    this.emit("pack:mutated", { structural: true });
+    this.emit("selection:changed");
+    return true;
+  }
+
+  setParent(itemId, newParentId) {
+    const P = this.pack;
+    if (!P || !itemId) return { ok: false, reason: "Invalid item" };
+    const cleanParent = newParentId || null;
+    if (cleanParent && wouldCreateCycle(P, itemId, cleanParent)) {
+      return { ok: false, reason: "Cannot parent an item inside itself or its own descendant" };
+    }
+    const node = (P.nodes || []).find((n) => n.id === itemId);
+    const layer = (P.layers || []).find((l) => l.id === itemId);
+    const obj = node || layer;
+    if (!obj) return { ok: false, reason: `Item ${itemId} not found` };
+    if ((obj.parent || null) === cleanParent) return { ok: true, unchanged: true };
+
+    this.pushUndo("Reparent Scene Node");
+    if (cleanParent) obj.parent = cleanParent;
+    else delete obj.parent;
+    this.emit("pack:mutated", { structural: true });
+    return { ok: true };
+  }
+
+  getEditTargetForNode(nodeId = this.selectedNodeId, createIfMissing = false) {
+    const P = this.pack;
+    if (!P || !nodeId) return null;
+    const node = (P.nodes || []).find((n) => n.id === nodeId);
+    if (!node) return null;
+
+    if (this.rigTarget.type === "blend") {
+      const bs = this.getBlendShape(this.rigTarget.id);
+      if (bs) {
+        let w = this.params.blend[bs.id] ?? bs.default ?? 0;
+        if (createIfMissing && Math.abs(w) < 0.05) {
+          w = bs.max ?? 1;
+          this.params.blend[bs.id] = w;
+        }
+        bs.nodes = bs.nodes || {};
+        if (createIfMissing && !bs.nodes[nodeId]) {
+          bs.nodes[nodeId] = { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+        }
+        return { kind: "blend", bs, nodeId, obj: bs.nodes[nodeId] || null, weightScale: w || 1 };
+      }
+    }
+
+    if (this.rigTarget.type === "pitch") {
+      const ps = createIfMissing ? this.ensurePitchSamples() : this.getPitchSamplesView();
+      const pi = Math.max(0, Math.min(ps.length - 1, this.activePitchIdx));
+      const sample = ps[pi];
+      if (sample && Math.abs(sample.pitch) > 1e-4) {
+        sample.nodes = sample.nodes || {};
+        if (createIfMissing && !sample.nodes[nodeId]) {
+          sample.nodes[nodeId] = { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+        }
+        return { kind: "pitch", pitchIdx: pi, sample, nodeId, obj: sample.nodes[nodeId] || null, weightScale: 1 };
+      }
+    }
+
+    const si = Math.max(0, Math.min((P.samples || []).length - 1, this.activeSampleIdx));
+    const sample = P.samples[si];
+    if (!sample) return null;
+    if (createIfMissing) {
+      sample.nodes = sample.nodes || {};
+      if (!sample.nodes[nodeId]) {
+        sample.nodes[nodeId] = { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+      }
+    }
+    return { kind: "yaw", sampleIdx: si, sample, nodeId, obj: (sample.nodes && sample.nodes[nodeId]) || null, weightScale: 1 };
   }
 
   getActiveSampleLayer(layerIdx = this.selectedLayerIdx) {
@@ -452,6 +660,22 @@ export class StudioState {
         return o;
       }),
     };
+    if ((s0.nodes && Object.keys(s0.nodes).length) || (s1.nodes && Object.keys(s1.nodes).length)) {
+      const nodes = {};
+      const nids = new Set([...Object.keys(s0.nodes || {}), ...Object.keys(s1.nodes || {})]);
+      for (const nid of nids) {
+        const a = s0.nodes?.[nid] || {}, b = s1.nodes?.[nid] || {};
+        const dt0 = a.dt || [0, 0], dt1 = b.dt || [0, 0];
+        const ds0 = a.dScale || [0, 0], ds1 = b.dScale || [0, 0];
+        nodes[nid] = {
+          dt: [+lerp(dt0[0] || 0, dt1[0] || 0).toFixed(2), +lerp(dt0[1] || 0, dt1[1] || 0).toFixed(2)],
+          dRot: +lerp(a.dRot || 0, b.dRot || 0).toFixed(3),
+          dScale: [+lerp(ds0[0] || 0, ds1[0] || 0).toFixed(4), +lerp(ds0[1] || 0, ds1[1] || 0).toFixed(4)],
+          dOp: +lerp(a.dOp || 0, b.dOp || 0).toFixed(3),
+        };
+      }
+      newSample.nodes = nodes;
+    }
 
     const insertAt = P.samples.findIndex((s) => s.angle > ang);
     const idx = insertAt < 0 ? P.samples.length : insertAt;
@@ -569,9 +793,26 @@ export class StudioState {
       if (fG) entry.F = fG.map((v) => +v.toFixed(5));
       layers[id] = entry;
     }
+    const newPitch = { pitch: p, layers };
+    if ((s0.nodes && Object.keys(s0.nodes).length) || (s1.nodes && Object.keys(s1.nodes).length)) {
+      const nodes = {};
+      const nids = new Set([...Object.keys(s0.nodes || {}), ...Object.keys(s1.nodes || {})]);
+      for (const nid of nids) {
+        const a = s0.nodes?.[nid] || {}, b = s1.nodes?.[nid] || {};
+        const dt0 = a.dt || [0, 0], dt1 = b.dt || [0, 0];
+        const ds0 = a.dScale || [0, 0], ds1 = b.dScale || [0, 0];
+        nodes[nid] = {
+          dt: [+(dt0[0] + (dt1[0] - dt0[0]) * f).toFixed(2), +(dt0[1] + (dt1[1] - dt0[1]) * f).toFixed(2)],
+          dRot: +((a.dRot || 0) + ((b.dRot || 0) - (a.dRot || 0)) * f).toFixed(3),
+          dScale: [+(ds0[0] + (ds1[0] - ds0[0]) * f).toFixed(4), +(ds0[1] + (ds1[1] - ds0[1]) * f).toFixed(4)],
+          dOp: +((a.dOp || 0) + ((b.dOp || 0) - (a.dOp || 0)) * f).toFixed(3),
+        };
+      }
+      newPitch.nodes = nodes;
+    }
     const ins = arr.findIndex((s) => s.pitch > p);
     const idx = ins < 0 ? arr.length : ins;
-    arr.splice(idx, 0, { pitch: p, layers });
+    arr.splice(idx, 0, newPitch);
     this.snapToPitchSample(idx);
     this.emit("pack:mutated", { structural: true });
     return { ok: true, idx, deg: +(p * 30).toFixed(1) };
@@ -798,11 +1039,18 @@ export class StudioState {
       this.selectedVerts.clear();
     }
     this.selectedLayerIdx = idx;
+    if (idx >= 0) this.selectedNodeId = null;
     this.emit("selection:changed");
   }
 
   renameLayerDeltas(oldId, newId) {
     if (!this.pack) return;
+    for (const L of this.pack.layers || []) {
+      if (L.parent === oldId) L.parent = newId;
+    }
+    for (const N of this.pack.nodes || []) {
+      if (N.parent === oldId) N.parent = newId;
+    }
     for (const ps of this.pack.pitchSamples || []) {
       if (ps.layers && oldId in ps.layers) {
         ps.layers[newId] = ps.layers[oldId];
@@ -819,6 +1067,12 @@ export class StudioState {
 
   deleteLayerDeltas(layerId) {
     if (!this.pack) return;
+    for (const L of this.pack.layers || []) {
+      if (L.parent === layerId) delete L.parent;
+    }
+    for (const N of this.pack.nodes || []) {
+      if (N.parent === layerId) delete N.parent;
+    }
     for (const ps of this.pack.pitchSamples || []) {
       if (ps.layers && layerId in ps.layers) delete ps.layers[layerId];
     }

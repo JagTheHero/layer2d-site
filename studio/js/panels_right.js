@@ -16,12 +16,15 @@ import {
   smoothGrid,
   mirrorGridY,
 } from "./warp_math.js";
+import { wouldCreateCycle, buildSceneGraph } from "./scene_graph.js";
 
 const PITCH_GROUPS = ["face", "bangs", "side", "crown", "back", "ear", "humanEar"];
 const BLEND_BINDS = [
   ["", "Manual / Timeline / Expr"],
   ["mouthOpen", "Live: Mouth Open"],
   ["eyeOpen", "Live: Eye Blink"],
+  ["eyeX", "Live: Eye Look X"],
+  ["eyeY", "Live: Eye Look Y"],
   ["breath", "Live: Breath"],
   ["angleX", "Live: Angle X"],
   ["angleY", "Live: Angle Y"],
@@ -97,6 +100,8 @@ export class RightInspector {
 
   _refreshNumericFields() {
     const st = this.state;
+    const bannerLbl = this.bodyEl.querySelector(".rig-target-banner .mono");
+    if (bannerLbl) bannerLbl.textContent = `Editing: ${st.getRigTargetLabel()}`;
     if (st.inspectorTab !== "layer" && st.inspectorTab !== "transform") return;
     if (st.rigTarget.type !== "yaw") return;
     const SL = st.selectedLayerIdx >= 0
@@ -140,10 +145,184 @@ export class RightInspector {
     return banner;
   }
 
-  /* ---------- LAYER TAB ---------- */
+  /* ---------- LAYER / GROUP NODE TAB ---------- */
+  _parentOptionsFor(itemId) {
+    const P = this.state.pack;
+    const opts = [["", "None (Root)"]];
+    for (const n of P.nodes || []) {
+      if (n.id === itemId || wouldCreateCycle(P, itemId, n.id)) continue;
+      opts.push([n.id, `◆ ${n.name || n.id} (${n.id})`]);
+    }
+    for (const x of P.layers || []) {
+      if (x.id === itemId || wouldCreateCycle(P, itemId, x.id)) continue;
+      opts.push([x.id, x.id]);
+    }
+    return opts;
+  }
+
+  _renderGroupNodeTab() {
+    const st = this.state;
+    const P = st.pack;
+    const node = st.getSelectedNode();
+    if (!node) {
+      this.bodyEl.innerHTML = `<div class="empty-note">Select a layer or transform group from the outliner.</div>`;
+      return;
+    }
+
+    const g0 = this._group();
+    g0.appendChild(this._rigTargetBanner());
+
+    const sections = [g0];
+
+    // If editing a Blend Shape, expose its live binding right here for 1-step Eye Look X/Y rigging!
+    if (st.rigTarget.type === "blend") {
+      const bs = st.getActiveBlendShape();
+      if (bs) {
+        const gBs = this._group();
+        const mh = document.createElement("div"); mh.className = "subhead"; mh.textContent = "BLEND SHAPE SETTINGS";
+        gBs.append(
+          mh,
+          this._textRow("Name", bs.name, (val) => {
+            const clean = val.trim();
+            if (!clean) return;
+            st.pushUndo("Rename Blend Shape");
+            bs.name = clean;
+            st.emit("pack:mutated", { structural: true });
+          }),
+          this._selectRow("Range", bs.min < 0 ? "bipolar" : "unipolar", [
+            ["unipolar", "0.0 → 1.0"],
+            ["bipolar", "-1.0 → +1.0"],
+          ], (v) => {
+            st.pushUndo("Change Blend Range");
+            bs.min = v === "bipolar" ? -1 : 0;
+            bs.max = 1;
+            st.emit("pack:mutated", { structural: true });
+          }),
+          this._selectRow("Live Binding", bs.bind || "", BLEND_BINDS, (v) => {
+            st.pushUndo("Bind Blend Shape");
+            bs.bind = v || null;
+            st.emit("pack:mutated", { structural: true });
+          }),
+        );
+        sections.push(gBs);
+      }
+    }
+
+    const g1 = this._group();
+    const h1 = document.createElement("div"); h1.className = "subhead"; h1.textContent = `TRANSFORM GROUP · ${node.id}`;
+    const pv = node.pivot || [P.canvas[0] * 0.5, P.canvas[1] * 0.5];
+    g1.append(
+      h1,
+      this._textRow("Group Name", node.name || node.id, (val) => {
+        const clean = val.trim();
+        if (!clean || clean === node.name) return;
+        st.pushUndo("Rename Transform Group");
+        node.name = clean;
+        st.emit("pack:mutated", { structural: true });
+      }),
+      this._selectRow("Parent Node", node.parent || "", this._parentOptionsFor(node.id), (val) => {
+        st.setParent(node.id, val || null);
+      }),
+      this._numRow("Pivot X", pv[0], -4000, 8000, 1, (v) => {
+        st.pushUndo("Move Group Pivot X");
+        node.pivot = [Math.round(v), pv[1]];
+        st.emit("pack:mutated", { structural: true });
+      }),
+      this._numRow("Pivot Y", pv[1], -4000, 8000, 1, (v) => {
+        st.pushUndo("Move Group Pivot Y");
+        node.pivot = [pv[0], Math.round(v)];
+        st.emit("pack:mutated", { structural: true });
+      }),
+      this._checkRow("Inherit Opacity", node.inheritOp !== false, (v) => {
+        st.pushUndo("Toggle Inherit Opacity");
+        node.inheritOp = v;
+        st.emit("pack:mutated", { structural: true });
+      }),
+    );
+    sections.push(g1);
+
+    const g2 = this._group();
+    const h2 = document.createElement("div"); h2.className = "subhead"; h2.textContent = "NODE TRANSFORM DELTA";
+    g2.appendChild(h2);
+    const tgt = st.getEditTargetForNode(node.id, false);
+    const d = tgt?.obj || { dt: [0, 0], dRot: 0, dScale: [0, 0], dOp: 0 };
+    const dt = d.dt || [0, 0];
+    const ds = d.dScale || [0, 0];
+    const mutateNode = (label, fn) => {
+      st.pushUndo(label);
+      const t = st.getEditTargetForNode(node.id, true);
+      if (!t?.obj) return;
+      fn(t.obj);
+      st.emit("pack:mutated");
+    };
+    g2.append(
+      this._numRow("Delta X", dt[0] || 0, -2000, 2000, 1, (v) => mutateNode("Node Delta X", (o) => { o.dt = [+v.toFixed(2), (o.dt && o.dt[1]) || 0]; })),
+      this._numRow("Delta Y", dt[1] || 0, -2000, 2000, 1, (v) => mutateNode("Node Delta Y", (o) => { o.dt = [(o.dt && o.dt[0]) || 0, +v.toFixed(2)]; })),
+      this._numRow("Delta Scale X", ds[0] || 0, -0.95, 3, 0.01, (v) => mutateNode("Node Scale X", (o) => { o.dScale = [+v.toFixed(4), (o.dScale && o.dScale[1]) || 0]; })),
+      this._numRow("Delta Scale Y", ds[1] || 0, -0.95, 3, 0.01, (v) => mutateNode("Node Scale Y", (o) => { o.dScale = [(o.dScale && o.dScale[0]) || 0, +v.toFixed(4)]; })),
+      this._numRow("Delta Rot °", d.dRot || 0, -180, 180, 0.5, (v) => mutateNode("Node Rot", (o) => { o.dRot = +v.toFixed(3); })),
+      this._numRow("Delta Opacity", d.dOp || 0, -1, 1, 0.02, (v) => mutateNode("Node Opacity", (o) => { o.dOp = Math.max(-1, Math.min(1, +v.toFixed(3))); })),
+    );
+    const actRow = document.createElement("div"); actRow.className = "prop-btn-row";
+    actRow.append(
+      this._actionBtn("Reset Node Delta", () => {
+        const t = st.getEditTargetForNode(node.id, false);
+        if (!t?.obj) return;
+        st.pushUndo("Reset Node Delta");
+        if (t.kind === "blend" && t.bs?.nodes) delete t.bs.nodes[node.id];
+        else if (t.sample?.nodes) delete t.sample.nodes[node.id];
+        st.emit("pack:mutated");
+      }),
+      this._actionBtn("Delete Group", () => st.deleteGroupNode(node.id)),
+    );
+    g2.appendChild(actRow);
+    sections.push(g2);
+
+    // Direct children list
+    const { byId, childrenOf } = buildSceneGraph(P);
+    const kids = childrenOf.get(node.id) || [];
+    const g3 = this._group();
+    const h3 = document.createElement("div"); h3.className = "subhead"; h3.textContent = `CHILDREN (${kids.length})`;
+    g3.appendChild(h3);
+    if (!kids.length) {
+      const note = document.createElement("div");
+      note.className = "param-empty-note";
+      note.textContent = "Drag layers onto this group in the outliner or set their Parent Node dropdown to attach them.";
+      g3.appendChild(note);
+    } else {
+      const list = document.createElement("div"); list.className = "mini-checklist";
+      for (const cid of kids) {
+        const it = byId.get(cid);
+        if (!it) continue;
+        const row = document.createElement("div"); row.className = "mini-check-item";
+        row.style.justifyContent = "space-between";
+        const sp = document.createElement("span");
+        sp.textContent = it.kind === "node" ? `◆ ${it.obj.name || cid}` : cid;
+        sp.style.cursor = "pointer";
+        sp.addEventListener("click", () => {
+          if (it.kind === "node") st.selectNode(cid);
+          else st.selectLayer(it.idx);
+        });
+        const xBtn = document.createElement("button");
+        xBtn.type = "button"; xBtn.className = "kf-mini-btn"; xBtn.textContent = "×";
+        xBtn.title = `Unparent ${cid} to Root`;
+        xBtn.addEventListener("click", () => st.setParent(cid, null));
+        row.append(sp, xBtn);
+        list.appendChild(row);
+      }
+      g3.appendChild(list);
+    }
+    sections.push(g3);
+
+    this.bodyEl.append(...sections);
+  }
+
   _renderLayerTab() {
     const st = this.state;
     const P = st.pack;
+    if (st.selectedNodeId && st.getSelectedNode()) {
+      return this._renderGroupNodeTab();
+    }
     const L = st.getSelectedLayer();
     const SL = st.getActiveSampleLayer();
     if (!L || !SL) {
@@ -181,6 +360,9 @@ export class RightInspector {
         if (st.studio?.layers?.[old]) { st.studio.layers[clean] = st.studio.layers[old]; delete st.studio.layers[old]; }
         st.renameLayerDeltas(old, clean);
         st.emit("pack:mutated", { structural: true });
+      }),
+      this._selectRow("Parent Node", L.parent || "", this._parentOptionsFor(L.id), (val) => {
+        st.setParent(L.id, val || null);
       }),
       this._selectRow("Pitch Group", L.pitchGroup || (P.pitchGroups && P.pitchGroups[L.id]) || "face", PITCH_GROUPS.map((g) => [g, g]), (val) => {
         st.pushUndo("Change Pitch Group");
@@ -319,6 +501,9 @@ export class RightInspector {
   /* ---------- TRANSFORM & KEYFORM / BLEND SHAPE TAB ---------- */
   _renderTransformTab() {
     const st = this.state;
+    if (st.selectedNodeId && st.getSelectedNode()) {
+      return this._renderGroupNodeTab();
+    }
     const L = st.getSelectedLayer();
     const SL = st.getActiveSampleLayer();
     if (!L || !SL) return this._renderLayerTab();

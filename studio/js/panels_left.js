@@ -9,6 +9,8 @@
  *      - TOGGLES & HOLDS clean flat switch list
  */
 
+import { hasSceneGraph, buildSceneGraph } from "./scene_graph.js";
+
 export class LeftPanels {
   constructor(state, engine, onAction) {
     this.state = state;
@@ -36,13 +38,14 @@ export class LeftPanels {
       this.state.layerSearch = this.searchInput.value.trim().toLowerCase();
       this.renderLayerTree();
     });
+    document.getElementById("btn-add-group")?.addEventListener("click", () => this.onAction("add-group"));
     document.getElementById("btn-add-layer").addEventListener("click", () => this.onAction("import-layer"));
     document.getElementById("btn-dup-layer").addEventListener("click", () => this.onAction("dup-layer"));
     document.getElementById("btn-del-layer").addEventListener("click", () => this.onAction("del-layer"));
     document.getElementById("btn-param-mirror").addEventListener("click", () => this.onAction("mirror-lr"));
     document.getElementById("btn-param-reset").addEventListener("click", () => {
       const p = this.state.params;
-      p.a = 0; p.pitch = 0; p.roll = 0; p.eyes = 1; p.vowel = null; p.tailSway = 0; p.bodySway = 0;
+      p.a = 0; p.pitch = 0; p.roll = 0; p.eyes = 1; p.eyeX = 0; p.eyeY = 0; p.vowel = null; p.tailSway = 0; p.bodySway = 0;
       for (const bs of this.state.pack?.blendShapes || []) p.blend[bs.id] = bs.default ?? 0;
       const nS = (this.state.pack?.samples || []).length;
       if (nS) this.state.snapToSample(Math.floor(nS / 2));
@@ -100,6 +103,15 @@ export class LeftPanels {
     const q = this.state.layerSearch;
     const metaLayers = (this.state.studio && this.state.studio.layers) || {};
 
+    const eyeSvgOn = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.8"/></svg>`;
+    const eyeSvgOff = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 2l12 12M5 5.3A6.8 6.8 0 0 1 8 4.5c4 0 6.5 3.5 6.5 3.5a11 11 0 0 1-2.2 2.4M10.8 10.8A6.5 6.5 0 0 1 8 11.5c-4 0-6.5-3.5-6.5-3.5a12 12 0 0 1 1.9-2.2"/></svg>`;
+
+    if (hasSceneGraph(P)) {
+      this._renderSceneGraphTree(el, P, metaLayers, q, eyeSvgOn, eyeSvgOff);
+      el.scrollTop = prevScroll;
+      return;
+    }
+
     const groups = new Map();
     for (let i = P.layers.length - 1; i >= 0; i--) {
       const L = P.layers[i];
@@ -110,9 +122,6 @@ export class LeftPanels {
       if (!groups.has(folder)) groups.set(folder, []);
       groups.get(folder).push({ idx: i, L, label });
     }
-
-    const eyeSvgOn = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4-6.5-4-6.5-4z"/><circle cx="8" cy="8" r="1.8"/></svg>`;
-    const eyeSvgOff = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 2l12 12M5 5.3A6.8 6.8 0 0 1 8 4.5c4 0 6.5 3.5 6.5 3.5a11 11 0 0 1-2.2 2.4M10.8 10.8A6.5 6.5 0 0 1 8 11.5c-4 0-6.5-3.5-6.5-3.5a12 12 0 0 1 1.9-2.2"/></svg>`;
 
     for (const [folder, items] of groups.entries()) {
       const collapsed = this.state.selectedFolderCollapsed.has(folder) && !q;
@@ -180,6 +189,175 @@ export class LeftPanels {
       }
     }
     el.scrollTop = prevScroll;
+  }
+
+  _renderSceneGraphTree(el, P, metaLayers, q, eyeSvgOn, eyeSvgOff) {
+    const st = this.state;
+    const { byId, childrenOf, roots } = buildSceneGraph(P);
+
+    const sortIds = (ids) => [...ids].sort((a, b) => {
+      const ia = byId.get(a), ib = byId.get(b);
+      if (ia.kind !== ib.kind) return ia.kind === "node" ? -1 : 1;
+      if (ia.kind === "node") return (ia.obj.name || ia.id).localeCompare(ib.obj.name || ib.id);
+      return ib.idx - ia.idx;
+    });
+
+    const matchesQuery = (id) => {
+      if (!q) return true;
+      const it = byId.get(id);
+      if (!it) return false;
+      const name = it.kind === "node" ? `${it.obj.name || ""} ${it.id}` : `${metaLayers[it.id]?.label || ""} ${it.id}`;
+      if (name.toLowerCase().includes(q)) return true;
+      return (childrenOf.get(id) || []).some(matchesQuery);
+    };
+
+    // Root drop zone for easy unparenting via drag-and-drop
+    const rootDrop = document.createElement("div");
+    rootDrop.className = "tree-root-drop";
+    rootDrop.textContent = "Scene Graph · Drop here to unparent (Root)";
+    rootDrop.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      rootDrop.classList.add("drag-reparent");
+    });
+    rootDrop.addEventListener("dragleave", () => rootDrop.classList.remove("drag-reparent"));
+    rootDrop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      rootDrop.classList.remove("drag-reparent");
+      const dragId = e.dataTransfer.getData("application/x-l2d-item");
+      if (dragId) st.setParent(dragId, null);
+    });
+    el.appendChild(rootDrop);
+
+    const chevSvg = `<svg class="tree-chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5l3 3 3-3"/></svg>`;
+    const nodeSvg = `<svg class="tree-icon node-diamond-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2L14 8L8 14L2 8Z"/></svg>`;
+    const layerSvg = `<svg class="tree-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="2.5" width="10" height="11" rx="1"/></svg>`;
+
+    const renderItem = (id, depth) => {
+      if (!matchesQuery(id)) return;
+      const item = byId.get(id);
+      if (!item) return;
+      const kids = sortIds(childrenOf.get(id) || []);
+      const hasKids = kids.length > 0;
+      const isCollapsed = hasKids && st.collapsedNodes.has(id) && !q;
+
+      if (item.kind === "node") {
+        const node = item.obj;
+        const isSel = st.selectedNodeId === id;
+        const row = document.createElement("div");
+        row.className = "node-row" + (isSel ? " selected" : "") + (isCollapsed ? " collapsed" : "");
+        row.style.paddingLeft = `${10 + depth * 14}px`;
+        row.draggable = true;
+        row.dataset.nodeId = id;
+        row.innerHTML = `
+          ${hasKids ? `<button class="chev-btn" type="button" title="Expand / Collapse">${chevSvg}</button>` : `<span class="chev-spacer"></span>`}
+          ${nodeSvg}
+          <span class="layer-name" title="${node.name} (${node.id})">${node.name || node.id}</span>
+          <span class="layer-tag node-tag" title="Transform Group (${kids.length} children)">GRP</span>
+          <span class="layer-z">${kids.length}</span>
+        `;
+        row.addEventListener("click", (e) => {
+          if (e.target.closest(".chev-btn")) {
+            e.stopPropagation();
+            if (st.collapsedNodes.has(id)) st.collapsedNodes.delete(id);
+            else st.collapsedNodes.add(id);
+            this.renderLayerTree();
+            return;
+          }
+          st.selectNode(id);
+        });
+        row.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("application/x-l2d-item", id);
+          e.dataTransfer.effectAllowed = "move";
+        });
+        row.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          row.classList.add("drag-reparent");
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-reparent"));
+        row.addEventListener("drop", (e) => {
+          e.preventDefault();
+          row.classList.remove("drag-reparent");
+          const dragId = e.dataTransfer.getData("application/x-l2d-item");
+          if (dragId && dragId !== id) st.setParent(dragId, id);
+        });
+        el.appendChild(row);
+      } else {
+        const idx = item.idx;
+        const L = item.obj;
+        const m = metaLayers[L.id] || { label: L.id };
+        const label = m.label && m.label !== L.id ? `${m.label} (${L.id})` : L.id;
+        const isSel = idx === st.selectedLayerIdx;
+        const isHid = st.hiddenIds.has(L.id);
+        const row = document.createElement("div");
+        row.className = "layer-row sg-layer-row" + (isSel ? " selected" : "") + (isHid ? " is-hidden" : "") + (isCollapsed ? " collapsed" : "");
+        row.style.paddingLeft = `${10 + depth * 14}px`;
+        row.draggable = true;
+        row.dataset.idx = String(idx);
+        row.dataset.layerId = L.id;
+        const badge = L.clip ? `<span class="layer-tag" title="Clipped to ${L.clip}">C</span>`
+          : L.behind ? `<span class="layer-tag" title="Behind occlusion mask">B</span>` : "";
+        row.innerHTML = `
+          ${hasKids ? `<button class="chev-btn" type="button" title="Expand / Collapse">${chevSvg}</button>` : `<span class="chev-spacer"></span>`}
+          ${layerSvg}
+          <span class="layer-name" title="${label}">${label}</span>
+          ${badge}
+          <button class="eye-btn" type="button" title="Toggle Visibility">${isHid ? eyeSvgOff : eyeSvgOn}</button>
+          <span class="layer-z">${idx}</span>
+        `;
+        row.addEventListener("click", (e) => {
+          if (e.target.closest(".eye-btn")) return;
+          if (e.target.closest(".chev-btn")) {
+            e.stopPropagation();
+            if (st.collapsedNodes.has(id)) st.collapsedNodes.delete(id);
+            else st.collapsedNodes.add(id);
+            this.renderLayerTree();
+            return;
+          }
+          st.selectLayer(idx);
+        });
+        row.querySelector(".eye-btn").addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (st.hiddenIds.has(L.id)) st.hiddenIds.delete(L.id);
+          else st.hiddenIds.add(L.id);
+          this.renderLayerTree();
+          st.emit("view:changed");
+        });
+        row.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/plain", String(idx));
+          e.dataTransfer.setData("application/x-l2d-item", L.id);
+          e.dataTransfer.effectAllowed = "move";
+        });
+        row.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          const r = row.getBoundingClientRect();
+          const relY = (e.clientY - r.top) / Math.max(1, r.height);
+          row.classList.remove("drag-over", "drag-reparent");
+          if (relY > 0.25 && relY < 0.75) row.classList.add("drag-reparent");
+          else row.classList.add("drag-over");
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drag-over", "drag-reparent"));
+        row.addEventListener("drop", (e) => {
+          e.preventDefault();
+          const isReparent = row.classList.contains("drag-reparent");
+          row.classList.remove("drag-over", "drag-reparent");
+          const dragId = e.dataTransfer.getData("application/x-l2d-item");
+          const fromIdxStr = e.dataTransfer.getData("text/plain");
+          if (isReparent || !fromIdxStr) {
+            if (dragId && dragId !== L.id) st.setParent(dragId, L.id);
+          } else {
+            const from = Number(fromIdxStr);
+            if (!Number.isNaN(from) && from !== idx) st.reorderLayer(from, idx);
+          }
+        });
+        el.appendChild(row);
+      }
+
+      if (!isCollapsed) {
+        for (const cid of kids) renderItem(cid, depth + 1);
+      }
+    };
+
+    for (const rid of sortIds(roots)) renderItem(rid, 0);
   }
 
   /* ---------- PARAMETERS (Angle X & Angle Y Keyforms + Blend Shapes) ---------- */
@@ -263,6 +441,26 @@ export class LeftPanels {
         onDrag: (u) => { st.params.eyes = u * 1.25; st.emit("params:changed"); },
         onInput: (v) => { st.params.eyes = clamp(v, 0, 1.25); st.emit("params:changed"); },
         onReset: () => { st.params.eyes = 1.0; st.emit("params:changed"); },
+      },
+      {
+        id: "eyeX", name: "Eye X", min: -1, max: 1, defaultVal: 0,
+        getVal: () => st.params.eyeX || 0,
+        fmt: (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
+        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
+        onKeyClick: (k) => { st.params.eyeX = k.u * 2 - 1; st.emit("params:changed"); },
+        onDrag: (u) => { st.params.eyeX = +(u * 2 - 1).toFixed(3); st.emit("params:changed"); },
+        onInput: (v) => { st.params.eyeX = clamp(v, -1, 1); st.emit("params:changed"); },
+        onReset: () => { st.params.eyeX = 0; st.emit("params:changed"); },
+      },
+      {
+        id: "eyeY", name: "Eye Y", min: -1, max: 1, defaultVal: 0,
+        getVal: () => st.params.eyeY || 0,
+        fmt: (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
+        keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
+        onKeyClick: (k) => { st.params.eyeY = k.u * 2 - 1; st.emit("params:changed"); },
+        onDrag: (u) => { st.params.eyeY = +(u * 2 - 1).toFixed(3); st.emit("params:changed"); },
+        onInput: (v) => { st.params.eyeY = clamp(v, -1, 1); st.emit("params:changed"); },
+        onReset: () => { st.params.eyeY = 0; st.emit("params:changed"); },
       },
       {
         id: "tailSway", name: "Tail Sway", min: -1, max: 1, defaultVal: 0,

@@ -270,8 +270,11 @@ export async function readL2D(buf) {
 export function computeManifest(pack, prevManifest = {}) {
   const expr = pack.expr || {};
   const vowels = Object.keys(expr.vowels || {});
+  const nodeCount = (pack.nodes || []).length;
+  const hasParentedLayer = (pack.layers || []).some((l) => Boolean(l && l.parent));
   const stats = {
     layers: (pack.layers || []).length,
+    nodes: nodeCount,
     chains: (pack.chains || []).length,
     samples: (pack.samples || []).length,
     pitchSamples: (pack.pitchSamples || []).length,
@@ -287,6 +290,7 @@ export function computeManifest(pack, prevManifest = {}) {
     headPitch2D: true,
     headPitchKeyforms: stats.pitchSamples > 0,
     blendShapeDeform: stats.blendShapes > 0,
+    sceneGraph: nodeCount > 0 || hasParentedLayer,
     springChains: stats.chains > 0,
     tailRig: Boolean(pack.tail && pack.tail.id),
     obsAlpha: true,
