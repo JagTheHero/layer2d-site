@@ -307,6 +307,28 @@ export class LeftPanels {
       delB.addEventListener("click", (e) => { e.stopPropagation(); d.onDelKey(); });
       kfBtns.append(addB, delB);
       nameCell.appendChild(kfBtns);
+    } else if (d.isBlend) {
+      row.classList.add("has-kf-btns", "is-blend-param");
+      lbl.style.cursor = "pointer";
+      lbl.title = `${d.name} — click to sculpt, double-click to reset`;
+      lbl.addEventListener("click", () => d.onEditToggle());
+      const bsBtns = document.createElement("span");
+      bsBtns.className = "kf-mini-btns";
+      const editB = document.createElement("button");
+      editB.type = "button";
+      editB.className = "kf-mini-btn blend-edit-btn";
+      editB.title = `Sculpt Blend Shape "${d.name}" (activates target & sets weight to 1)`;
+      editB.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.5 2.5l2 2-7.5 7.5-3 .8.8-3 7.7-7.3z"/></svg>`;
+      editB.addEventListener("click", (e) => { e.stopPropagation(); d.onEditToggle(); });
+      const delB = document.createElement("button");
+      delB.type = "button";
+      delB.className = "kf-mini-btn";
+      delB.textContent = "×";
+      delB.title = `Delete Blend Shape "${d.name}"`;
+      delB.addEventListener("click", (e) => { e.stopPropagation(); d.onDelete(); });
+      bsBtns.append(editB, delB);
+      nameCell.appendChild(bsBtns);
+      row._blendEditBtn = editB;
     }
 
     const wrap = document.createElement("div");
@@ -474,53 +496,36 @@ export class LeftPanels {
     } else {
       for (const bs of shapes) {
         const min = bs.min ?? 0, max = bs.max ?? 1;
-        const bRow = document.createElement("div");
-        bRow.className = "blend-row";
-        bRow.dataset.bsId = bs.id;
-
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "blend-edit-btn";
-        editBtn.title = `Sculpt Blend Shape "${bs.name}" (activates target & sets weight to 1)`;
-        editBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M11.5 2.5l2 2-7.5 7.5-3 .8.8-3 7.7-7.3z"/></svg>`;
-        editBtn.addEventListener("click", () => {
-          if (st.rigTarget.type === "blend" && st.rigTarget.id === bs.id) {
-            st.snapToSample(st.activeSampleIdx);
-          } else {
-            st.setRigTarget({ type: "blend", id: bs.id });
-          }
-        });
-
-        const nameEl = document.createElement("span");
-        nameEl.className = "param-name blend-name";
-        nameEl.textContent = bs.name;
-        nameEl.title = `${bs.name} — click to sculpt, double-click to reset`;
-        nameEl.addEventListener("click", () => st.setRigTarget({ type: "blend", id: bs.id }));
-        nameEl.addEventListener("dblclick", () => st.setBlendWeight(bs.id, bs.default ?? 0));
-
-        const rng = document.createElement("input");
-        rng.type = "range";
-        rng.className = "prop-range blend-range";
-        rng.min = String(min);
-        rng.max = String(max);
-        rng.step = "0.01";
-        rng.value = String(st.params.blend?.[bs.id] ?? bs.default ?? 0);
-        rng.addEventListener("input", () => st.setBlendWeight(bs.id, parseFloat(rng.value)));
-
-        const valOut = document.createElement("span");
-        valOut.className = "mono blend-val";
-        valOut.textContent = Number(rng.value).toFixed(2);
-
-        const delBtn = document.createElement("button");
-        delBtn.type = "button";
-        delBtn.className = "kf-mini-btn blend-del-btn";
-        delBtn.textContent = "×";
-        delBtn.title = `Delete Blend Shape "${bs.name}"`;
-        delBtn.addEventListener("click", () => st.deleteBlendShape(bs.id));
-
-        bRow.append(editBtn, nameEl, rng, valOut, delBtn);
-        el.appendChild(bRow);
-        this._blendCtrls.push({ bs, row: bRow, editBtn, rng, valOut });
+        const keys = min < 0 ? [{ u: 0 }, { u: (0 - min) / (max - min) }, { u: 1 }] : [{ u: 0 }, { u: 1 }];
+        const def = {
+          id: `blend:${bs.id}`,
+          bsId: bs.id,
+          isBlend: true,
+          name: bs.name,
+          min,
+          max,
+          defaultVal: bs.default ?? 0,
+          getVal: () => st.params.blend?.[bs.id] ?? bs.default ?? 0,
+          fmt: (v) => (min < 0 && v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
+          keys,
+          onKeyClick: (k) => st.setBlendWeight(bs.id, min + k.u * (max - min)),
+          onDrag: (u) => st.setBlendWeight(bs.id, +(min + u * (max - min)).toFixed(3)),
+          onInput: (v) => st.setBlendWeight(bs.id, clamp(v, min, max)),
+          onReset: () => st.setBlendWeight(bs.id, bs.default ?? 0),
+          onEditToggle: () => {
+            if (st.rigTarget.type === "blend" && st.rigTarget.id === bs.id) {
+              st.snapToSample(st.activeSampleIdx);
+            } else {
+              st.setRigTarget({ type: "blend", id: bs.id });
+            }
+          },
+          onDelete: () => st.deleteBlendShape(bs.id),
+        };
+        const ctrl = this._buildSliderRow(def);
+        ctrl.row.dataset.bsId = bs.id;
+        el.appendChild(ctrl.row);
+        ctrls.push(ctrl);
+        this._blendCtrls.push({ bs, ctrl, editBtn: ctrl.row._blendEditBtn });
       }
     }
 
@@ -540,12 +545,16 @@ export class LeftPanels {
       const d = c.def;
       const val = d.getVal();
       const uVal = clamp01((val - d.min) / (d.max - d.min));
-      const originU = d.min < 0 ? 0.5 : 0;
+      const originU = d.min < 0 ? (0 - d.min) / (d.max - d.min) : 0;
       c.fill.style.left = `${Math.min(originU, uVal) * 100}%`;
       c.fill.style.width = `${Math.abs(uVal - originU) * 100}%`;
       c.thumb.style.left = `${uVal * 100}%`;
 
-      const isTargetRow = (d.isYaw && st.rigTarget.type === "yaw") || (d.isPitch && st.rigTarget.type === "pitch");
+      const isTargetRow = Boolean(
+        (d.isYaw && st.rigTarget.type === "yaw")
+        || (d.isPitch && st.rigTarget.type === "pitch")
+        || (d.isBlend && st.rigTarget.type === "blend" && st.rigTarget.id === d.bsId),
+      );
       c.row.classList.toggle("is-rig-target", isTargetRow);
 
       for (const item of c.diamonds) {
@@ -572,12 +581,8 @@ export class LeftPanels {
       b.classList.toggle("active", st.params.vowel === b.dataset.vowel);
     }
     for (const bc of this._blendCtrls) {
-      const w = st.params.blend?.[bc.bs.id] ?? bc.bs.default ?? 0;
       const isEditing = st.rigTarget.type === "blend" && st.rigTarget.id === bc.bs.id;
-      bc.row.classList.toggle("is-rig-target", isEditing);
-      bc.editBtn.classList.toggle("active", isEditing);
-      if (document.activeElement !== bc.rng) bc.rng.value = String(w);
-      bc.valOut.textContent = Number(w).toFixed(2);
+      if (bc.editBtn) bc.editBtn.classList.toggle("active", isEditing);
     }
   }
 
