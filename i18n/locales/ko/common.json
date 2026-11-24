@@ -1,0 +1,17 @@
+{
+  "lang.switch": "언어",
+  "nav.ariaPrimary": "기본 내비게이션",
+  "nav.ariaFooter": "푸터",
+  "nav.ariaToc": "이 페이지 목차",
+  "nav.format": "포맷",
+  "nav.studio": "Studio",
+  "nav.player": "Player",
+  "nav.avatars": "아바타",
+  "nav.docs": "문서",
+  "nav.forAi": "AI 가이드",
+  "nav.github": "GitHub",
+  "cta.launchPlayer": "Player 실행",
+  "common.close": "닫기",
+  "common.copy": "복사",
+  "common.copied": "복사됨!"
+}

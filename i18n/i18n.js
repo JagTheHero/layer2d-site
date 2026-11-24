@@ -10,7 +10,8 @@
     { code: "hi", label: "हिन्दी", short: "हिन्दी", englishName: "Hindi", dir: "ltr", font: "https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap" },
     { code: "es", label: "Español", short: "ES", englishName: "Spanish", dir: "ltr" },
     { code: "ar", label: "العربية", short: "AR", englishName: "Arabic", dir: "rtl", font: "https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;600;700&display=swap" },
-    { code: "fr", label: "Français", short: "FR", englishName: "French", dir: "ltr" }
+    { code: "fr", label: "Français", short: "FR", englishName: "French", dir: "ltr" },
+    { code: "ko", label: "한국어", short: "한국어", englishName: "Korean", dir: "ltr", font: "https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&display=swap" }
   ];
 
   var LOCALE_MAP = Object.create(null);
@@ -36,7 +37,10 @@
     ar: "ar",
     arabic: "ar",
     fr: "fr",
-    french: "fr"
+    french: "fr",
+    ko: "ko",
+    kr: "ko",
+    korean: "ko"
   };
 
   function normalizeLang(raw) {

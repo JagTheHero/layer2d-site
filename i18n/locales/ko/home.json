@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — 오픈 2D 아바타 엔진",
+  "meta.description": "무료 .l2d 명세와 WebGL2 OBS 플레이어. 라이선스 비용 없이 직접 제작하고 리깅하고 방송하세요.",
+  "hero.titleHtml": "오픈 2D<br>아바타 엔진.",
+  "hero.subtitle": "무료 .l2d 명세, 브라우저 스튜디오, WebGL2 OBS 플레이어. 라이선스 비용 없이 제작하고 리깅하고 방송하세요.",
+  "hero.openStudio": "Studio 열기",
+  "avatars.heading": "아바타",
+  "avatars.liveBadge": "실시간 WebGL2",
+  "avatars.livePreviewTitle": "{name} 실시간 WebGL2 미리보기",
+  "avatars.interactivePreviewTitle": "{name} 인터랙티브 WebGL2 미리보기",
+  "spec.heading": "오픈 명세",
+  "spec.feature1Html": "이식성 높은 <br>.l2d 포맷",
+  "spec.feature2Html": "WebGL2 <br>OBS 런타임",
+  "spec.feature3Html": "다층 깊이 <br>3D 헤어 &amp; 물리",
+  "lightbox.openPlayer": "Player에서 열기",
+  "lightbox.tryDemoPlayer": "데모 Player 체험",
+  "lightbox.openStudio": "Studio에서 열기",
+  "lightbox.tryDemoStudio": "데모 Studio 체험"
+}
