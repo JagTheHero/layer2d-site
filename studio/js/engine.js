@@ -26,6 +26,7 @@ import {
   applySceneGraphToKey,
   getDescendants,
 } from "./scene_graph.js";
+import { t } from "./i18n_bridge.js";
 
 const DEFAULT_VOWELS = { A: "M04", I: "M05", U: "M06", E: "M07", O: "M08" };
 const LID = [0.4, 0.15];
@@ -62,7 +63,7 @@ export class Layer2DEngine {
       antialias: false,
       preserveDrawingBuffer: true,
     });
-    if (!this.gl) throw new Error("WebGL2 is required for Layer2D Studio.");
+    if (!this.gl) throw new Error(t("err.noWebgl2", null, "WebGL2 is required for Layer2D Studio."));
 
     this.prog = null;
     this.U = {};

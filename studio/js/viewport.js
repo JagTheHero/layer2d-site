@@ -20,6 +20,7 @@ import {
   inv2,
 } from "./warp_math.js";
 import { computeNodeBounds, buildSceneGraph } from "./scene_graph.js";
+import { t } from "./i18n_bridge.js";
 
 export class ViewportController {
   constructor(state, engine, overlayCanvas, stageFrame) {
@@ -730,13 +731,13 @@ export class ViewportController {
     const P = this.state.pack;
     if (!P) return [];
     const list = [
-      { id: "head_c", label: "Head Center", x: P.head.centre[0], y: P.head.centre[1], set: (x, y) => { P.head.centre[0] = x; P.head.centre[1] = y; } },
-      { id: "neck", label: "Neck Pivot", x: P.head.pivot[0], y: P.head.pivot[1], set: (x, y) => { P.head.pivot[0] = x; P.head.pivot[1] = y; } },
-      { id: "waist", label: "Waist Pivot", x: P.motion.waist[0], y: P.motion.waist[1], set: (x, y) => { P.motion.waist[0] = x; P.motion.waist[1] = y; } },
+      { id: "head_c", label: t("pivot.headCenter", null, "Head Center"), x: P.head.centre[0], y: P.head.centre[1], set: (x, y) => { P.head.centre[0] = x; P.head.centre[1] = y; } },
+      { id: "neck", label: t("pivot.neck", null, "Neck Pivot"), x: P.head.pivot[0], y: P.head.pivot[1], set: (x, y) => { P.head.pivot[0] = x; P.head.pivot[1] = y; } },
+      { id: "waist", label: t("pivot.waist", null, "Waist Pivot"), x: P.motion.waist[0], y: P.motion.waist[1], set: (x, y) => { P.motion.waist[0] = x; P.motion.waist[1] = y; } },
     ];
-    if (P.motion.shoulder?.armR) list.push({ id: "shR", label: "Shoulder R", x: P.motion.shoulder.armR[0], y: P.motion.shoulder.armR[1], set: (x, y) => { P.motion.shoulder.armR[0] = x; P.motion.shoulder.armR[1] = y; } });
-    if (P.motion.shoulder?.armL) list.push({ id: "shL", label: "Shoulder L", x: P.motion.shoulder.armL[0], y: P.motion.shoulder.armL[1], set: (x, y) => { P.motion.shoulder.armL[0] = x; P.motion.shoulder.armL[1] = y; } });
-    if (P.tail && P.tail.pivot) list.push({ id: "tail", label: "Tail Pivot", x: P.tail.pivot[0], y: P.tail.pivot[1], set: (x, y) => { P.tail.pivot[0] = x; P.tail.pivot[1] = y; } });
+    if (P.motion.shoulder?.armR) list.push({ id: "shR", label: t("pivot.shoulderR", null, "Shoulder R"), x: P.motion.shoulder.armR[0], y: P.motion.shoulder.armR[1], set: (x, y) => { P.motion.shoulder.armR[0] = x; P.motion.shoulder.armR[1] = y; } });
+    if (P.motion.shoulder?.armL) list.push({ id: "shL", label: t("pivot.shoulderL", null, "Shoulder L"), x: P.motion.shoulder.armL[0], y: P.motion.shoulder.armL[1], set: (x, y) => { P.motion.shoulder.armL[0] = x; P.motion.shoulder.armL[1] = y; } });
+    if (P.tail && P.tail.pivot) list.push({ id: "tail", label: t("pivot.tail", null, "Tail Pivot"), x: P.tail.pivot[0], y: P.tail.pivot[1], set: (x, y) => { P.tail.pivot[0] = x; P.tail.pivot[1] = y; } });
     for (const node of P.nodes || []) {
       const pv = node.pivot || [P.canvas[0] * 0.5, P.canvas[1] * 0.5];
       list.push({

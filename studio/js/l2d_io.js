@@ -4,6 +4,8 @@
  * 100% pure browser ES module — zero backend required.
  */
 
+import { t } from "./i18n_bridge.js";
+
 const ENC = new TextEncoder();
 const DEC = new TextDecoder("utf-8");
 
@@ -97,14 +99,14 @@ export async function parseZip(buf) {
   for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) {
     if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error("Not a valid .l2d archive (missing ZIP directory)");
+  if (eocd < 0) throw new Error(t("err.invalidZip", null, "Not a valid .l2d archive (missing ZIP directory)"));
   const cdCount = dv.getUint16(eocd + 10, true);
   let ptr = dv.getUint32(eocd + 16, true);
   const files = Object.create(null);
   const seen = new Set();
 
   for (let i = 0; i < cdCount; i++) {
-    if (dv.getUint32(ptr, true) !== 0x02014b50) throw new Error("Corrupt .l2d central directory");
+    if (dv.getUint32(ptr, true) !== 0x02014b50) throw new Error(t("err.corruptDir", null, "Corrupt .l2d central directory"));
     const method = dv.getUint16(ptr + 10, true);
     const compSz = dv.getUint32(ptr + 20, true);
     const nameLen = dv.getUint16(ptr + 28, true);
@@ -115,9 +117,9 @@ export async function parseZip(buf) {
     ptr += 46 + nameLen + extraLen + commLen;
 
     if (!name || name.startsWith("/") || name.startsWith("\\") || name.split(/[\\/]/).includes("..")) {
-      throw new Error(`Unsafe path in .l2d archive: ${name}`);
+      throw new Error(t("err.unsafePath", { name }, "Unsafe path in .l2d archive: {name}"));
     }
-    if (seen.has(name)) throw new Error(`Duplicate entry in .l2d archive: ${name}`);
+    if (seen.has(name)) throw new Error(t("err.dupEntry", { name }, "Duplicate entry in .l2d archive: {name}"));
     seen.add(name);
     if (name.endsWith("/")) continue;
 
@@ -129,13 +131,13 @@ export async function parseZip(buf) {
       files[name] = raw.slice();
     } else if (method === 8) {
       if (typeof DecompressionStream === "undefined") {
-        throw new Error("Browser lacks DecompressionStream for compressed .l2d entries");
+        throw new Error(t("err.noDecomp", null, "Browser lacks DecompressionStream for compressed .l2d entries"));
       }
       const ds = new DecompressionStream("deflate-raw");
       const out = await new Response(new Blob([raw]).stream().pipeThrough(ds)).arrayBuffer();
       files[name] = new Uint8Array(out);
     } else {
-      throw new Error(`Unsupported ZIP method ${method} for ${name}`);
+      throw new Error(t("err.unsupportedZip", { method, name }, "Unsupported ZIP method {method} for {name}"));
     }
   }
   return files;
@@ -236,25 +238,25 @@ export async function writeZip(entries) {
 export async function readL2D(buf) {
   const files = await parseZip(buf);
   const manifestRaw = files["layer2d.json"];
-  if (!manifestRaw) throw new Error(".l2d archive missing layer2d.json");
+  if (!manifestRaw) throw new Error(t("err.missingManifest", null, ".l2d archive missing layer2d.json"));
   const manifest = JSON.parse(DEC.decode(manifestRaw));
   if (manifest.format !== "layer2d/v1") {
-    throw new Error(`Unsupported .l2d format: ${manifest.format} (expected layer2d/v1)`);
+    throw new Error(t("err.unsupportedFormat", { format: manifest.format }, "Unsupported .l2d format: {format} (expected layer2d/v1)"));
   }
   const csRaw = files["SHA256SUMS.json"];
-  if (!csRaw) throw new Error(".l2d archive missing SHA256SUMS.json");
+  if (!csRaw) throw new Error(t("err.missingChecksums", null, ".l2d archive missing SHA256SUMS.json"));
   const checksums = JSON.parse(DEC.decode(csRaw));
   const members = Object.keys(files).filter((k) => k !== "SHA256SUMS.json");
   if (Object.keys(checksums).length !== members.length || members.some((k) => !(k in checksums))) {
-    throw new Error(".l2d SHA256SUMS.json member mismatch");
+    throw new Error(t("err.checksumMemberMismatch", null, ".l2d SHA256SUMS.json member mismatch"));
   }
   await Promise.all(members.map(async (k) => {
     const digest = await sha256Hex(files[k]);
-    if (digest !== checksums[k]) throw new Error(`SHA-256 mismatch in .l2d archive: ${k}`);
+    if (digest !== checksums[k]) throw new Error(t("err.checksumMismatch", { name: k }, "SHA-256 mismatch in .l2d archive: {name}"));
   }));
 
   const entry = manifest.entry || "pack.json";
-  if (!files[entry]) throw new Error(`.l2d archive missing ${entry}`);
+  if (!files[entry]) throw new Error(t("err.missingEntry", { entry }, ".l2d archive missing {entry}"));
   const pack = JSON.parse(DEC.decode(files[entry]));
   const studio = files["studio.json"] ? JSON.parse(DEC.decode(files["studio.json"])) : null;
 

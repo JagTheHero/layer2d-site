@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — محرك الأفاتار ثنائي الأبعاد المفتوح",
+  "meta.description": "مواصفة .l2d المجانية ومشغّل OBS بتقنية WebGL2. أنشئ وحرّك وبُثّ من دون أي رسوم ترخيص.",
+  "hero.titleHtml": "محرك الأفاتار ثنائي الأبعاد<br>المفتوح.",
+  "hero.subtitle": "مواصفة .l2d مجانية، واستوديو متصفح، ومشغّل OBS بتقنية WebGL2. أنشئ وحرّك وبُثّ من دون أي رسوم ترخيص.",
+  "hero.openStudio": "فتح الاستوديو",
+  "avatars.heading": "نماذج الأفاتار",
+  "avatars.liveBadge": "WebGL2 مباشر",
+  "avatars.livePreviewTitle": "معاينة WebGL2 مباشرة لـ {name}",
+  "avatars.interactivePreviewTitle": "معاينة WebGL2 تفاعلية لـ {name}",
+  "spec.heading": "مواصفة مفتوحة",
+  "spec.feature1Html": "صيغة .l2d <br>قابلة للنقل",
+  "spec.feature2Html": "بيئة تشغيل OBS <br>بتقنية WebGL2",
+  "spec.feature3Html": "شعر وفيزياء ثلاثية الأبعاد <br>متعددة الأعماق",
+  "lightbox.openPlayer": "فتح في المشغّل",
+  "lightbox.tryDemoPlayer": "تجربة المشغّل التجريبي",
+  "lightbox.openStudio": "فتح في الاستوديو",
+  "lightbox.tryDemoStudio": "تجربة الاستوديو التجريبي"
+}

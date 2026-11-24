@@ -1,13 +1,20 @@
+<!doctype html>
+<html lang="en" data-i18n-ns="player">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Layer2D Live Rig</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%230e1016' stroke='%23282d3b' stroke-width='2'/%3E%3Cpath d='M32 35.5L53 45.2L32 54.8L11 45.2L32 35.5Z' fill='%232e3445' stroke='%234c556e' stroke-width='1.4'/%3E%3Cpath d='M32 23.2L53 33L32 42.6L11 33L32 23.2Z' fill='%23e4e8f0'/%3E%3Cpath d='M32 10.6L53 20.4L32 30.2L11 20.4L32 10.6Z' fill='%23d42042'/%3E%3Crect x='29.4' y='17.8' width='5.2' height='5.2' rx='0.9' transform='rotate(45 32 20.4)' fill='%23fff'/%3E%3C/svg%3E">
+<script src="../i18n/i18n.js"></script>
 <style>
 /* layout: one stage filling the screen, a slim control bar along its bottom edge */
 :root {
   --bg: #e9e7f2; --panel: #f7f6fb; --fg: #1c1a2b; --muted: #5d5a73; --accent: #5b3fd6; --line: #d3d0e2;
   --stage: #0c0cf2;
-  --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-ui: "IBM Plex Sans", "Noto Sans JP", "Noto Sans SC", "Noto Sans Devanagari", "Noto Sans Arabic", "Segoe UI", system-ui, sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
+html.i18n-loading body { opacity: 0; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) { --bg: #12111b; --panel: #1b1a28; --fg: #ecebf5; --muted: #a29fba; --accent: #9d86ff;
     --line: #2e2c42; color-scheme: dark }
@@ -16,7 +23,7 @@
   --line: #2e2c42; color-scheme: dark }
 html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); display: flex; flex-direction: column; }
-#stage { position: relative; flex: 1; min-height: 0; background: var(--stage); touch-action: none; cursor: move; }
+#stage { position: relative; flex: 1; min-height: 0; background: var(--stage); touch-action: none; cursor: move; direction: ltr; }
 #stage.checker {
   background: repeating-conic-gradient(#d8d8df 0% 25%, #f4f4f8 0% 50%) 0 0 / 24px 24px;
 }
@@ -33,9 +40,10 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); dis
 :root.obs #bar, :root.obs #hint, :root.obs #status { display: none !important; }
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #status:empty { display: none; }
-#status { position: absolute; top: 12px; left: max(12px, env(safe-area-inset-left, 0px)); font: 12px/1.4 var(--font-data);
+#status { position: absolute; top: 12px; inset-inline-start: max(12px, env(safe-area-inset-left, 0px)); font: 12px/1.4 var(--font-data);
   color: #fff; background: rgba(0, 0, 0, .35); padding: 4px 8px; border-radius: 4px; font-variant-numeric: tabular-nums; }
-#hint { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; font-size: 13px; color: rgba(255, 255, 255, .8); }
+#hint { position: absolute; bottom: 12px; left: 0; right: 0; text-align: center; font-size: 13px; color: rgba(255, 255, 255, .8); padding: 0 12px; }
+[dir="rtl"] #hint, [dir="rtl"] #err { direction: rtl; }
 #bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--panel); border-top: 1px solid var(--line);
   max-height: 28vh; overflow-y: auto;
   padding-block: 10px calc(10px + env(safe-area-inset-bottom, 0px));
@@ -43,96 +51,110 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); dis
 #bar .group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 [hidden] { display: none !important; }
 #faces { max-height: 76px; overflow-y: auto; padding-right: 4px; }
-button { font: 500 13px var(--font-ui); color: var(--fg); background: transparent; border: 1px solid var(--line);
+button, select.lang-select { font: 500 13px var(--font-ui); color: var(--fg); background: transparent; border: 1px solid var(--line);
   border-radius: 6px; padding: 7px 12px; cursor: pointer; }
-button:hover { border-color: var(--accent); }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+select.lang-select { background: var(--panel); padding: 6px 10px; }
+button:hover, select.lang-select:hover { border-color: var(--accent); }
+button:focus-visible, select.lang-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-#bar .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+#bar .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-inline-end: 2px; }
 #bar input[type="range"] { width: 120px; accent-color: var(--accent); }
 #bar .sync-wrap { display: inline-flex; align-items: center; gap: 5px; }
 #bar .sync-wrap input[type="range"] { width: 88px; }
-#bar .mono-val { font: 11px/1 var(--font-data); color: var(--muted); min-width: 36px; font-variant-numeric: tabular-nums; }
+#bar .mono-val { font: 11px/1 var(--font-data); color: var(--muted); min-width: 36px; font-variant-numeric: tabular-nums; direction: ltr; }
 #phoneme-pill { font: 600 11px/1 var(--font-data); color: var(--fg); background: color-mix(in srgb, var(--accent) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 999px; padding: 5px 8px;
-  min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; }
+  min-width: 58px; text-align: center; font-variant-numeric: tabular-nums; direction: ltr; }
 #err { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; padding: 24px; text-align: center; }
 </style>
-
+</head>
+<body>
 <div id="stage">
   <canvas id="gl"></canvas>
-  <div id="status">loading…</div>
-  <div id="hint">Drag across her to turn &amp; pitch her head, or drag a hand to move her arm</div>
+  <div id="status" data-i18n="player.status.loading">loading…</div>
+  <div id="hint" data-i18n="player.hint">Drag across her to turn &amp; pitch her head, or drag a hand to move her arm</div>
   <div id="err" hidden></div>
 </div>
 <div id="bar">
-  <div class="group" role="group" aria-label="Model">
-    <span class="label">Model</span>
-    <button id="open-l2d" title="Open a local .l2d avatar (saved locally in this browser; Ctrl+O)">Open .l2d</button>
-    <button id="clear-l2d" hidden title="Forget the locally saved .l2d avatar in this slot">Clear saved</button>
-    <button id="obs-link" aria-pressed="false" title="Start P2P OBS Link — stream your .l2d, webcam, mic &amp; controls straight into a transparent OBS Browser Source (no server or OBS flags needed)">OBS Link</button>
-    <button id="copy-obs" hidden title="Copy the OBS Browser Source URL for this link">Copy URL</button>
-    <button id="obs-audio" aria-pressed="true" hidden title="Tunnel live mic audio through the OBS Browser Source so playback and avatar mouth stay frame-synced (enable 'Control audio via OBS' and mute raw OBS mic)">OBS Audio: ON</button>
-    <label id="obs-sync-wrap" class="sync-wrap" hidden title="Delay tunneled OBS audio (0–300 ms) so phoneme look-ahead + WebGL2 rendering stay locked to voice playback">
-      <span class="label">Sync</span>
+  <div class="group" role="group" aria-label="Model" data-i18n-attr="aria-label:player.group.model">
+    <span class="label" data-i18n="player.group.model">Model</span>
+    <button id="open-l2d" data-i18n="player.btn.openL2d" data-i18n-attr="title:player.btn.openL2dTitle" title="Open a local .l2d avatar (saved locally in this browser; Ctrl+O)">Open .l2d</button>
+    <button id="clear-l2d" hidden data-i18n="player.btn.clearSaved" data-i18n-attr="title:player.btn.clearSavedTitle" title="Forget the locally saved .l2d avatar in this slot">Clear saved</button>
+    <button id="obs-link" aria-pressed="false" data-i18n="player.btn.obsLink" data-i18n-attr="title:player.btn.obsLinkTitle" title="Start P2P OBS Link — stream your .l2d, webcam, mic &amp; controls straight into a transparent OBS Browser Source (no server or OBS flags needed)">OBS Link</button>
+    <button id="copy-obs" hidden data-i18n="player.btn.copyUrl" data-i18n-attr="title:player.btn.copyUrlTitle" title="Copy the OBS Browser Source URL for this link">Copy URL</button>
+    <button id="obs-audio" aria-pressed="true" hidden data-i18n="player.btn.obsAudioOn" data-i18n-attr="title:player.btn.obsAudioTitle" title="Tunnel live mic audio through the OBS Browser Source so playback and avatar mouth stay frame-synced (enable 'Control audio via OBS' and mute raw OBS mic)">OBS Audio: ON</button>
+    <label id="obs-sync-wrap" class="sync-wrap" hidden data-i18n-attr="title:player.btn.obsSyncTitle" title="Delay tunneled OBS audio (0–300 ms) so phoneme look-ahead + WebGL2 rendering stay locked to voice playback">
+      <span class="label" data-i18n="player.btn.obsSync">Sync</span>
       <input id="obs-delay" type="range" min="0" max="300" step="5" value="90">
       <span id="obs-delay-val" class="mono-val">90ms</span>
     </label>
     <input id="l2d-file" type="file" accept=".l2d,.zip" hidden>
   </div>
-  <div class="group" role="group" aria-label="View">
-    <span class="label">View</span>
-    <button id="v-bust" aria-pressed="true">Bust</button>
-    <button id="v-full" aria-pressed="false">Full body</button>
+  <div class="group" role="group" aria-label="View" data-i18n-attr="aria-label:player.group.view">
+    <span class="label" data-i18n="player.group.view">View</span>
+    <button id="v-bust" aria-pressed="true" data-i18n="player.btn.bust">Bust</button>
+    <button id="v-full" aria-pressed="false" data-i18n="player.btn.fullBody">Full body</button>
   </div>
-  <div class="group" role="group" aria-label="Motion">
-    <span class="label">Motion</span>
-    <button id="auto" aria-pressed="true">Performance</button>
-    <button id="bounce">Bounce</button>
-    <button id="tilt" aria-pressed="false">Tilt head</button>
-    <button id="lift" aria-pressed="false">Lift arms</button>
-    <button id="rest">Rest arms</button>
-    <button id="walk" aria-pressed="false">Walk</button>
+  <div class="group" role="group" aria-label="Motion" data-i18n-attr="aria-label:player.group.motion">
+    <span class="label" data-i18n="player.group.motion">Motion</span>
+    <button id="auto" aria-pressed="true" data-i18n="player.btn.performance">Performance</button>
+    <button id="bounce" data-i18n="player.btn.bounce">Bounce</button>
+    <button id="tilt" aria-pressed="false" data-i18n="player.btn.tiltHead">Tilt head</button>
+    <button id="lift" aria-pressed="false" data-i18n="player.btn.liftArms">Lift arms</button>
+    <button id="rest" data-i18n="player.btn.restArms">Rest arms</button>
+    <button id="walk" aria-pressed="false" data-i18n="player.btn.walk">Walk</button>
   </div>
-  <div class="group" role="group" aria-label="Live">
-    <span class="label">Live</span>
-    <button id="mic" aria-pressed="false">Mic</button>
-    <button id="lip-mode" aria-pressed="true" title="Cycle lip-sync engine: Phoneme (LPC formants + consonants) → Basic (3-band AEIOU) → Volume">Lip: Phoneme</button>
-    <span id="phoneme-pill" hidden title="Live detected phoneme → avatar mouth viseme">—</span>
-    <button id="cam" aria-pressed="false">Cam</button>
+  <div class="group" role="group" aria-label="Live" data-i18n-attr="aria-label:player.group.live">
+    <span class="label" data-i18n="player.group.live">Live</span>
+    <button id="mic" aria-pressed="false" data-i18n="player.btn.mic">Mic</button>
+    <button id="lip-mode" aria-pressed="true" data-i18n-attr="title:player.btn.lipTitle" title="Cycle lip-sync engine: Phoneme (LPC formants + consonants) → Basic (3-band AEIOU) → Volume">Lip: Phoneme</button>
+    <span id="phoneme-pill" hidden data-i18n-attr="title:player.phonemeTitle" title="Live detected phoneme → avatar mouth viseme">—</span>
+    <button id="cam" aria-pressed="false" data-i18n="player.btn.cam">Cam</button>
     <button id="bg-btn" aria-pressed="false">BG: Light</button>
   </div>
-  <div class="group" role="group" aria-label="Eyes">
-    <label class="label" for="eyes">Eyes</label>
+  <div class="group" role="group" aria-label="Eyes" data-i18n-attr="aria-label:player.group.eyes">
+    <label class="label" for="eyes" data-i18n="player.group.eyes">Eyes</label>
     <input id="eyes" type="range" min="0" max="1.4" step="0.01" value="1">   <!-- (down to shut: the blink's) -->
   </div>
-  <div class="group" role="group" aria-label="Face" id="faces">
-    <span class="label">Face</span>
+  <div class="group" role="group" aria-label="Face" data-i18n-attr="aria-label:player.group.face" id="faces">
+    <span class="label" data-i18n="player.group.face">Face</span>
   </div>
-  <div class="group" role="group" aria-label="Hold" id="holds">
-    <span class="label">Hold</span>
+  <div class="group" role="group" aria-label="Hold" data-i18n-attr="aria-label:player.group.hold" id="holds">
+    <span class="label" data-i18n="player.group.hold">Hold</span>
   </div>
-  <div class="group" role="group" aria-label="Hair colour" id="hairs">
-    <span class="label">Hair</span>
+  <div class="group" role="group" aria-label="Hair colour" data-i18n-attr="aria-label:player.group.hairAria" id="hairs">
+    <span class="label" data-i18n="player.group.hair">Hair</span>
   </div>
-  <div class="group" role="group" aria-label="Eye colour" id="eyecols">
-    <span class="label">Eyes</span>
+  <div class="group" role="group" aria-label="Eye colour" data-i18n-attr="aria-label:player.group.eyeColAria" id="eyecols">
+    <span class="label" data-i18n="player.group.eyeCol">Eyes</span>
   </div>
-  <div class="group" role="group" aria-label="Hair style" id="styles">
-    <span class="label">Style</span>
+  <div class="group" role="group" aria-label="Hair style" data-i18n-attr="aria-label:player.group.styleAria" id="styles">
+    <span class="label" data-i18n="player.group.style">Style</span>
   </div>
-  <div class="group" role="group" aria-label="Outfit" id="outfits">
-    <span class="label">Outfit</span>
+  <div class="group" role="group" aria-label="Outfit" data-i18n-attr="aria-label:player.group.outfit" id="outfits">
+    <span class="label" data-i18n="player.group.outfit">Outfit</span>
   </div>
-  <div class="group" role="group" aria-label="Cloth" id="skyctl" hidden>   <!-- (opt-in: the pack's sheer.sky) -->
-    <span class="label">Cloth</span>
-    <button id="sky-on" aria-pressed="true">Aurora</button>
-    <button id="sky-night" aria-pressed="false">Night</button>
+  <div class="group" role="group" aria-label="Cloth" data-i18n-attr="aria-label:player.group.cloth" id="skyctl" hidden>   <!-- (opt-in: the pack's sheer.sky) -->
+    <span class="label" data-i18n="player.group.cloth">Cloth</span>
+    <button id="sky-on" aria-pressed="true" data-i18n="player.btn.aurora">Aurora</button>
+    <button id="sky-night" aria-pressed="false" data-i18n="player.btn.night">Night</button>
+  </div>
+  <div class="group" role="group" aria-label="Language" data-i18n-attr="aria-label:player.group.lang" id="lang-group">
+    <label class="label" for="player-lang" data-i18n="player.group.lang">Language</label>
+    <select id="player-lang" class="lang-select" data-lang-select aria-label="Language">
+      <option value="en">English</option>
+    </select>
   </div>
 </div>
 
 <script>
 "use strict";
+function tr(key, vars = null, fallback = undefined) {
+  const api = window.Layer2DI18n;
+  if (api && typeof api.t === "function") return api.t(key, vars, fallback);
+  const s = fallback !== undefined ? fallback : key;
+  return vars ? s.replace(/\{([a-zA-Z0-9_]+)\}/g, (m, k) => (k in vars && vars[k] !== undefined && vars[k] !== null ? String(vars[k]) : m)) : s;
+}
 const QP = new URLSearchParams(location.search);
 const OBS_MODE = QP.get("obs") === "1" || QP.get("obs") === "true" || QP.get("bg") === "transparent";
 const LINK_ID = (QP.get("link") || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48);
@@ -190,11 +212,13 @@ async function idbClearModel(slot = MODEL_SLOT) {
     return true;
   } catch { return false; }
 }
+let lastSavedName = null;
 function updateSavedUi(savedName) {
+  lastSavedName = savedName || null;
   const btn = $("clear-l2d");
   if (!btn) return;
   btn.hidden = !savedName;
-  if (savedName) btn.title = `Forget locally saved ${savedName} (slot: ${MODEL_SLOT})`;
+  if (savedName) btn.title = tr("player.btn.clearSavedTitleNamed", { name: savedName, slot: MODEL_SLOT }, "Forget locally saved {name} (slot: {slot})");
 }
 const REQ_BG = (QP.get("bg") || "").toLowerCase();
 let bgMode = OBS_MODE ? "transparent" : (["light", "dark", "green", "transparent"].includes(REQ_BG) ? REQ_BG : "light");
@@ -1504,7 +1528,12 @@ const ctl = { auto: true, autoT0: 0, a: 0, aTarget: 0, pitch: 0, pitchTarget: 0,
               head: 1, headT: 0,
               arms: { R: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 }, L: { raise: 0, elbow: 0, raiseTo: 0, elbowTo: 0 } } };
 const LIP_MODES = ["phoneme", "basic", "volume"];
-const LIP_LABELS = { phoneme: "Lip: Phoneme", basic: "Lip: Basic", volume: "Lip: Volume" };
+function lipLabel(mode) {
+  return tr(`player.lip.${mode}`, null, mode === "basic" ? "Lip: Basic" : mode === "volume" ? "Lip: Volume" : "Lip: Phoneme");
+}
+function lipModeName(mode) {
+  return tr(`player.lipMode.${mode}`, null, mode);
+}
 const LIP_MODE_KEY = "layer2d_lip_mode";
 const OBS_AUDIO_KEY = "layer2d_obs_audio";
 const OBS_DELAY_KEY = "layer2d_obs_delay_ms";
@@ -2696,14 +2725,14 @@ async function parseL2DArchive(buf) {
   for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) {
     if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error("Not a valid .l2d archive (missing ZIP directory)");
+  if (eocd < 0) throw new Error(tr("player.err.invalidZip", null, "Not a valid .l2d archive (missing ZIP directory)"));
   const cdCount = dv.getUint16(eocd + 10, true);
   let ptr = dv.getUint32(eocd + 16, true);
   const files = Object.create(null);
   const seenNames = new Set();
   const dec = new TextDecoder("utf-8");
   for (let i = 0; i < cdCount; i++) {
-    if (dv.getUint32(ptr, true) !== 0x02014b50) throw new Error("Corrupt .l2d central directory");
+    if (dv.getUint32(ptr, true) !== 0x02014b50) throw new Error(tr("player.err.corruptDir", null, "Corrupt .l2d central directory"));
     const method = dv.getUint16(ptr + 10, true);
     const compSz = dv.getUint32(ptr + 20, true);
     const nameLen = dv.getUint16(ptr + 28, true);
@@ -2713,10 +2742,10 @@ async function parseL2DArchive(buf) {
     const name = dec.decode(bytes.subarray(ptr + 46, ptr + 46 + nameLen));
     ptr += 46 + nameLen + extraLen + commLen;
     if (!name || name.startsWith("/") || name.startsWith("\\") || name.split(/[\\/]/).includes("..")) {
-      throw new Error(`Unsafe path in .l2d archive: ${name}`);
+      throw new Error(tr("player.err.unsafePath", { name }, "Unsafe path in .l2d archive: {name}"));
     }
     if (seenNames.has(name)) {
-      throw new Error(`Duplicate entry in .l2d archive: ${name}`);
+      throw new Error(tr("player.err.dupEntry", { name }, "Duplicate entry in .l2d archive: {name}"));
     }
     seenNames.add(name);
     if (name.endsWith("/")) continue;
@@ -2727,12 +2756,12 @@ async function parseL2DArchive(buf) {
     if (method === 0) {
       files[name] = raw.slice();
     } else if (method === 8) {
-      if (typeof DecompressionStream === "undefined") throw new Error("Browser lacks DecompressionStream for compressed .l2d entries");
+      if (typeof DecompressionStream === "undefined") throw new Error(tr("player.err.noDecomp", null, "Browser lacks DecompressionStream for compressed .l2d entries"));
       const ds = new DecompressionStream("deflate-raw");
       const out = await new Response(new Blob([raw]).stream().pipeThrough(ds)).arrayBuffer();
       files[name] = new Uint8Array(out);
     } else {
-      throw new Error(`Unsupported .l2d ZIP compression method ${method} for ${name}`);
+      throw new Error(tr("player.err.unsupportedComp", { method, name }, "Unsupported .l2d ZIP compression method {method} for {name}"));
     }
   }
   return files;
@@ -2740,14 +2769,14 @@ async function parseL2DArchive(buf) {
 function loadAssetBlob(path) {
   if (!L2D_FILES) return fetch(path).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status} ${path}`); return r.blob(); });
   const data = L2D_FILES[path] || L2D_FILES[path.replace(/^tex\//, "")] || L2D_FILES[`tex/${path}`];
-  if (!data) return Promise.reject(new Error(`Missing asset in .l2d archive: ${path}`));
+  if (!data) return Promise.reject(new Error(tr("player.err.missingAsset", { path }, "Missing asset in .l2d archive: {path}")));
   const mime = path.endsWith(".webp") ? "image/webp" : path.endsWith(".jpg") ? "image/jpeg" : "image/png";
   return Promise.resolve(new Blob([data], { type: mime }));
 }
 function loadAssetImage(path) {
   if (!L2D_FILES) return loadImage(path);
   const data = L2D_FILES[path];
-  if (!data) return Promise.reject(new Error(`Missing asset in .l2d archive: ${path}`));
+  if (!data) return Promise.reject(new Error(tr("player.err.missingAsset", { path }, "Missing asset in .l2d archive: {path}")));
   const mime = path.endsWith(".webp") ? "image/webp" : path.endsWith(".jpg") ? "image/jpeg" : "image/png";
   const url = URL.createObjectURL(new Blob([data], { type: mime }));
   return loadImage(url).finally(() => URL.revokeObjectURL(url));
@@ -2759,24 +2788,24 @@ async function loadPackData(l2dBuffer = null, l2dName = null) {
     L2D_FILES = await parseL2DArchive(l2dBuffer);
     const dec = new TextDecoder("utf-8");
     const manifestRaw = L2D_FILES["layer2d.json"];
-    if (!manifestRaw) throw new Error(".l2d archive missing required layer2d.json manifest");
+    if (!manifestRaw) throw new Error(tr("player.err.missingManifest", null, ".l2d archive missing required layer2d.json manifest"));
     const manifest = JSON.parse(dec.decode(manifestRaw));
     if (manifest.format !== "layer2d/v1") {
-      throw new Error(`Unsupported .l2d format: ${manifest.format} (expected layer2d/v1)`);
+      throw new Error(tr("player.err.unsupportedFormat", { format: manifest.format }, "Unsupported .l2d format: {format} (expected layer2d/v1)"));
     }
     const csRaw = L2D_FILES["SHA256SUMS.json"];
-    if (!csRaw) throw new Error(".l2d archive missing required SHA256SUMS.json");
+    if (!csRaw) throw new Error(tr("player.err.missingChecksums", null, ".l2d archive missing required SHA256SUMS.json"));
     const checksums = JSON.parse(dec.decode(csRaw));
     const expectedMembers = Object.keys(L2D_FILES).filter((k) => k !== "SHA256SUMS.json");
     if (Object.keys(checksums).length !== expectedMembers.length || expectedMembers.some((k) => !(k in checksums))) {
-      throw new Error(".l2d SHA256SUMS.json key mismatch");
+      throw new Error(tr("player.err.checksumKeyMismatch", null, ".l2d SHA256SUMS.json key mismatch"));
     }
     await Promise.all(expectedMembers.map(async (k) => {
       const digest = await sha256Hex(L2D_FILES[k]);
-      if (digest !== checksums[k]) throw new Error(`SHA-256 mismatch in .l2d archive: ${k}`);
+      if (digest !== checksums[k]) throw new Error(tr("player.err.checksumMismatch", { name: k }, "SHA-256 mismatch in .l2d archive: {name}"));
     }));
     const entry = manifest.entry || "pack.json";
-    if (!L2D_FILES[entry]) throw new Error(`.l2d archive missing ${entry}`);
+    if (!L2D_FILES[entry]) throw new Error(tr("player.err.missingEntry", { entry }, ".l2d archive missing {entry}"));
     const archiveHash = await sha256Hex(new Uint8Array(rawCopy));
     currentL2D = { buf: rawCopy, name: l2dName || `${manifest.id || manifest.name || "avatar"}.l2d`, hash: archiveHash };
     return JSON.parse(dec.decode(L2D_FILES[entry]));
@@ -2800,7 +2829,7 @@ async function loadPackData(l2dBuffer = null, l2dName = null) {
       try {
         const pack = await loadPackData(saved.buffer.slice(0), saved.name || "saved.l2d");
         updateSavedUi(saved.name || "saved.l2d");
-        flashStatus(`restored ${saved.name || "saved avatar"}`);
+        flashStatus(tr("player.msg.restored", { name: saved.name || tr("player.msg.savedAvatar", null, "saved avatar") }, "restored {name}"));
         return pack;
       } catch (e) {
         console.warn("Clearing invalid saved .l2d from IndexedDB:", e);
@@ -2822,9 +2851,12 @@ async function loadPackData(l2dBuffer = null, l2dName = null) {
 // ---- start ----------------------------------------------------------------------------------------------------------
 async function start(l2dBuffer = null, l2dName = null) {
   gl = $("gl").getContext("webgl2", { premultipliedAlpha: true, alpha: true, antialias: false, preserveDrawingBuffer: true });
-  if (!gl) return fail("This browser has no WebGL 2, which the live rig needs.");
+  if (!gl) return fail(tr("player.err.noWebgl2", null, "This browser has no WebGL 2, which the live rig needs."));
   P = await loadPackData(l2dBuffer, l2dName);
-  if (P.title) document.title = P.title;
+  if (P.title) {
+    document.title = P.title;
+    document.documentElement.setAttribute("data-i18n-keep-title", "1");
+  }
   HL_IDS = new Set(Array.isArray(P.highlightIds) ? P.highlightIds : []);
   if (P.views) Object.assign(VIEWS, P.views);        // (opt-in: an avatar's own framing)
   const reqView = QP.get("view");
@@ -2863,7 +2895,7 @@ async function start(l2dBuffer = null, l2dName = null) {
     if (L.posed) tex[L.id + "_posed"] = upload(await loadAssetImage(`tex/${L.id}_posed.png`), true);
     if (L.wipe) wipes[L.id] = upload(await loadAssetImage(`tex/${L.id}_wipe.png`), false);
     if (L.eye && L.eye.mode === 1) opens[L.id] = upload(await loadAssetImage(`tex/${L.id}_open.png`), true);
-    $("status").textContent = `loading ${++done}/${P.layers.length}`;
+    $("status").textContent = tr("player.status.loadingProgress", { done: ++done, total: P.layers.length }, "loading {done}/{total}");
   }));
   if (ARM && ARM.loaded) await ARM.loaded;   // (arm3d: the pack's painting of her arms, if it has one)
   if (P.sheer && P.sheer.sky) skyInit();     // (opt-in: the aurora in her sheer cloth)
@@ -2888,7 +2920,10 @@ async function start(l2dBuffer = null, l2dName = null) {
   const hairCols = (P.hairTint && P.hairTint.colours) || {};
   const eyeCols = (P.eyeTint && P.eyeTint.colours) || {};
   for (const name of ["Natural", ...Object.keys(hairCols)]) {
-    const b = document.createElement("button"); b.textContent = name; b.dataset.hair = name;
+    const b = document.createElement("button");
+    b.textContent = name === "Natural" ? tr("player.opt.natural", null, "Natural") : name;
+    if (name === "Natural") b.setAttribute("data-i18n", "player.opt.natural");
+    b.dataset.hair = name;
     b.setAttribute("aria-pressed", name === "Natural" ? "true" : "false");
     b.onclick = () => { hairPick = name === "Natural" ? null : name;
       for (const o of $("hairs").querySelectorAll("button")) press(o, o.dataset.hair === name); };
@@ -2907,14 +2942,20 @@ async function start(l2dBuffer = null, l2dName = null) {
     $("outfits").appendChild(b);
   }
   for (const name of ["Own", ...Object.keys(P.hairStyles || {})]) {
-    const b = document.createElement("button"); b.textContent = name[0].toUpperCase() + name.slice(1); b.dataset.style = name;
+    const b = document.createElement("button");
+    b.textContent = name === "Own" ? tr("player.opt.own", null, "Own") : (name[0].toUpperCase() + name.slice(1));
+    if (name === "Own") b.setAttribute("data-i18n", "player.opt.own");
+    b.dataset.style = name;
     b.setAttribute("aria-pressed", name === "Own" ? "true" : "false");
     b.onclick = () => { pickStyle(name === "Own" ? null : name);
       for (const o of $("styles").querySelectorAll("button")) press(o, o.dataset.style === name); };
     $("styles").appendChild(b);
   }
   for (const name of ["Natural", ...Object.keys(eyeCols)]) {
-    const b = document.createElement("button"); b.textContent = name; b.dataset.eye = name;
+    const b = document.createElement("button");
+    b.textContent = name === "Natural" ? tr("player.opt.natural", null, "Natural") : name;
+    if (name === "Natural") b.setAttribute("data-i18n", "player.opt.natural");
+    b.dataset.eye = name;
     b.setAttribute("aria-pressed", name === "Natural" ? "true" : "false");
     b.onclick = () => { eyePick = name === "Natural" ? null : name;
       for (const o of $("eyecols").querySelectorAll("button")) press(o, o.dataset.eye === name); };
@@ -3066,7 +3107,7 @@ function loop(now) {
   frames++;
   if (now - fpsT >= 0.5) {
     fps = frames / (now - fpsT); frames = 0; fpsT = now;
-    if (!OBS_MODE) $("status").textContent = now < statusUntil ? statusMsg : `${fps.toFixed(0)} fps`;
+    if (!OBS_MODE) $("status").textContent = now < statusUntil ? statusMsg : tr("player.status.fps", { fps: fps.toFixed(0) }, "{fps} fps");
   }
   requestAnimationFrame(loop);
 }
@@ -3089,11 +3130,15 @@ function setAuto(on) {       // hand over without a jump: the manual pose starts
   ctl.auto = on; press($("auto"), on);
 }
 function setView(v) { view = v; press($("v-bust"), v === "bust"); press($("v-full"), v === "full"); }
-const BG_CYCLE = ["light", "dark", "green", "transparent"], BG_LABELS = { light: "BG: Light", dark: "BG: Dark", green: "BG: Green", transparent: "BG: Trans" };
+const BG_CYCLE = ["light", "dark", "green", "transparent"];
+function bgLabel(mode) {
+  const fb = { light: "BG: Light", dark: "BG: Dark", green: "BG: Green", transparent: "BG: Trans" };
+  return tr(`player.bg.${mode}`, null, fb[mode] || "BG: Light");
+}
 function setBg(mode) {
   bgMode = BG_CYCLE.includes(mode) ? mode : "light";
   const btn = $("bg-btn");
-  if (btn) { btn.textContent = BG_LABELS[bgMode]; press(btn, bgMode !== "light"); }
+  if (btn) { btn.textContent = bgLabel(bgMode); press(btn, bgMode !== "light"); }
   $("stage").classList.toggle("checker", bgMode === "transparent" && !OBS_MODE);
 }
 $("bg-btn").onclick = () => setBg(BG_CYCLE[(BG_CYCLE.indexOf(bgMode) + 1) % BG_CYCLE.length]);
@@ -3442,7 +3487,7 @@ function setLipMode(mode, save = true) {
   lipMode = normalizeLipMode(mode);
   const btn = $("lip-mode");
   if (btn) {
-    btn.textContent = LIP_LABELS[lipMode];
+    btn.textContent = lipLabel(lipMode);
     press(btn, lipMode === "phoneme");
   }
   if (save) { try { localStorage.setItem(LIP_MODE_KEY, lipMode); } catch {} }
@@ -3453,7 +3498,7 @@ if ($("lip-mode")) {
   $("lip-mode").onclick = () => {
     const next = LIP_MODES[(LIP_MODES.indexOf(lipMode) + 1) % LIP_MODES.length];
     setLipMode(next, true);
-    flashStatus(`lip-sync mode: ${next}`);
+    flashStatus(tr("player.msg.lipMode", { mode: lipModeName(next) }, "lip-sync mode: {mode}"));
   };
 }
 function updateMic(now) {
@@ -3474,7 +3519,7 @@ function stopMic() {
 }
 async function toggleMic() {
   if (mic.on) return stopMic();
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return flashStatus("mic unsupported");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return flashStatus(tr("player.msg.micUnsupported", null, "mic unsupported"));
   try {
     // Disable browser AEC/NS/AGC DSP buffering (~60-110ms lag!) — clean raw voice for LPC phoneme analysis & OBS audio tunnel!
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -3490,10 +3535,12 @@ async function toggleMic() {
     press($("mic"), true);
     updatePhonemePill(mic.state, true);
     if (obsHost.on) syncObsAudioCalls();
-    flashStatus(obsHost.on && obsHost.audioTunnel ? `mic on (${lipMode} + OBS audio tunnel)` : `mic lip-sync on (${lipMode})`);
+    flashStatus(obsHost.on && obsHost.audioTunnel
+      ? tr("player.msg.micOnTunnel", { mode: lipModeName(lipMode) }, "mic on ({mode} + OBS audio tunnel)")
+      : tr("player.msg.micOn", { mode: lipModeName(lipMode) }, "mic lip-sync on ({mode})"));
   } catch (e) {
     stopMic();
-    flashStatus("mic denied");
+    flashStatus(tr("player.msg.micDenied", null, "mic denied"));
   }
 }
 $("mic").onclick = toggleMic;
@@ -3554,10 +3601,10 @@ function updateCam() {
 }
 async function toggleCam() {
   if (cam.on || cam.loading) return stopCam();
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return flashStatus("cam unsupported");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return flashStatus(tr("player.msg.camUnsupported", null, "cam unsupported"));
   cam.loading = true;
   press($("cam"), true);
-  flashStatus("loading face tracker…", 30);
+  flashStatus(tr("player.msg.camLoading", null, "loading face tracker…"), 30);
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" } });
     if (!cam.loading) { for (const t of stream.getTracks()) t.stop(); return; }
@@ -3579,10 +3626,10 @@ async function toggleCam() {
     if (!cam.loading) return stopCam();
     cam.loading = false; cam.on = true; cam.lastVideoT = -1;
     setAuto(false);
-    flashStatus("cam tracking on");
+    flashStatus(tr("player.msg.camOn", null, "cam tracking on"));
   } catch (e) {
     stopCam();
-    flashStatus("cam unavailable");
+    flashStatus(tr("player.msg.camUnavailable", null, "cam unavailable"));
   }
 }
 $("cam").onclick = toggleCam;
@@ -3735,16 +3782,18 @@ async function loadDroppedL2D(file) {
   if (!file) return;
   try {
     $("err").hidden = true;
-    $("status").textContent = `loading ${file.name}…`;
+    $("status").textContent = tr("player.status.loadingFile", { name: file.name }, "loading {name}…");
     const buf = await file.arrayBuffer();
     resetPlayerState();
     await start(buf.slice(0), file.name);
     const saved = await idbSaveModel(file.name, buf, MODEL_SLOT, currentL2D.hash);
     if (saved) updateSavedUi(file.name);
     if (obsHost.on) obsBroadcastModel();
-    flashStatus(saved ? `loaded & saved ${file.name} locally` : `loaded ${file.name}`);
+    flashStatus(saved
+      ? tr("player.msg.loadedSaved", { name: file.name }, "loaded & saved {name} locally")
+      : tr("player.msg.loaded", { name: file.name }, "loaded {name}"));
   } catch (e) {
-    fail("Could not open .l2d bundle: " + e.message);
+    fail(tr("player.err.openBundle", { error: e.message }, "Could not open .l2d bundle: {error}"));
   }
 }
 if ($("open-l2d") && $("l2d-file")) {
@@ -3759,7 +3808,7 @@ if ($("clear-l2d")) {
     resetPlayerState();
     await start(null);
     if (obsHost.on) obsBroadcastModel();
-    flashStatus("cleared locally saved avatar");
+    flashStatus(tr("player.msg.clearedSaved", null, "cleared locally saved avatar"));
   };
 }
 
@@ -3775,7 +3824,7 @@ async function loadPeerCtor() {
   if (PeerCtor) return PeerCtor;
   const mod = await import("https://esm.sh/peerjs@1.5.4");
   PeerCtor = mod.Peer || mod.default;
-  if (!PeerCtor) throw new Error("PeerJS unavailable");
+  if (!PeerCtor) throw new Error(tr("player.err.peerUnavailable", null, "PeerJS unavailable"));
   return PeerCtor;
 }
 function getOrCreateLinkId() {
@@ -3820,13 +3869,21 @@ function updateObsLinkUi() {
   const btn = $("obs-link"), cp = $("copy-obs"), au = $("obs-audio"), sw = $("obs-sync-wrap"), dl = $("obs-delay"), dv = $("obs-delay-val");
   if (btn) {
     press(btn, obsHost.on || obsHost.loading);
-    btn.textContent = obsHost.loading ? "OBS Link…" : (obsHost.on ? (obsHost.conns.size ? `OBS Link (${obsHost.conns.size})` : "OBS Link: ON") : "OBS Link");
+    btn.textContent = obsHost.loading
+      ? tr("player.btn.obsLinkLoading", null, "OBS Link…")
+      : (obsHost.on
+        ? (obsHost.conns.size
+          ? tr("player.btn.obsLinkConnected", { count: obsHost.conns.size }, "OBS Link ({count})")
+          : tr("player.btn.obsLinkOn", null, "OBS Link: ON"))
+        : tr("player.btn.obsLink", null, "OBS Link"));
   }
   if (cp) cp.hidden = !obsHost.on;
   if (au) {
     au.hidden = !obsHost.on;
     press(au, obsHost.audioTunnel);
-    au.textContent = obsHost.audioTunnel ? (obsHost.calls.size ? "OBS Audio: LIVE" : "OBS Audio: ON") : "OBS Audio: OFF";
+    au.textContent = obsHost.audioTunnel
+      ? (obsHost.calls.size ? tr("player.btn.obsAudioLive", null, "OBS Audio: LIVE") : tr("player.btn.obsAudioOn", null, "OBS Audio: ON"))
+      : tr("player.btn.obsAudioOff", null, "OBS Audio: OFF");
   }
   if (sw) sw.hidden = !(obsHost.on && obsHost.audioTunnel);
   if (dl && Number(dl.value) !== obsHost.audioDelayMs) dl.value = String(obsHost.audioDelayMs);
@@ -4084,9 +4141,9 @@ async function copyObsLinkUrl() {
   const urlStr = getObsLinkUrl(id);
   try {
     await navigator.clipboard.writeText(urlStr);
-    flashStatus("OBS Link URL copied — paste into OBS Browser Source", 4);
+    flashStatus(tr("player.msg.obsUrlCopied", null, "OBS Link URL copied — paste into OBS Browser Source"), 4);
   } catch {
-    window.prompt("Paste this URL into an OBS Browser Source (keep this browser tab open for mic/cam/controls):", urlStr);
+    window.prompt(tr("player.msg.obsUrlPrompt", null, "Paste this URL into an OBS Browser Source (keep this browser tab open for mic/cam/controls):"), urlStr);
   }
 }
 async function startObsHost(copyNow = false, customId = null) {
@@ -4094,7 +4151,7 @@ async function startObsHost(copyNow = false, customId = null) {
   obsHost.loading = true;
   obsHost.id = customId || getOrCreateLinkId();
   updateObsLinkUi();
-  flashStatus("starting OBS Link…", 10);
+  flashStatus(tr("player.msg.obsStarting", null, "starting OBS Link…"), 10);
   try {
     const Peer = await loadPeerCtor();
     const peer = new Peer(obsHost.id, { config: ICE_CFG, debug: 0 });
@@ -4105,7 +4162,7 @@ async function startObsHost(copyNow = false, customId = null) {
       try { localStorage.setItem(OBS_LINK_ON_KEY, "1"); } catch {}
       updateObsLinkUi();
       if (copyNow) copyObsLinkUrl();
-      else flashStatus("OBS Link ready — waiting for OBS", 3);
+      else flashStatus(tr("player.msg.obsReady", null, "OBS Link ready — waiting for OBS"), 3);
       if (!obsHost.bgTimer) {
         obsHost.bgTimer = setInterval(() => {
           if (!obsHost.on || !obsHost.conns.size) return;
@@ -4122,7 +4179,7 @@ async function startObsHost(copyNow = false, customId = null) {
       conn.on("open", () => {
         obsHost.conns.add(conn);
         updateObsLinkUi();
-        flashStatus(`OBS connected (${obsHost.conns.size})`, 3);
+        flashStatus(tr("player.msg.obsConnected", { count: obsHost.conns.size }, "OBS connected ({count})"), 3);
         try { conn.send(makeHelloPayload()); } catch {}
         try { conn.send(buildObsPose(performance.now() / 1000)); } catch {}
         syncObsAudioCalls();
@@ -4144,16 +4201,16 @@ async function startObsHost(copyNow = false, customId = null) {
       console.warn("OBS Link host error:", err);
       if (err && err.type === "unavailable-id") {
         stopObsHost(false);
-        flashStatus("OBS Link already active in another tab", 4);
+        flashStatus(tr("player.msg.obsAlreadyActive", null, "OBS Link already active in another tab"), 4);
       } else if (obsHost.loading) {
         stopObsHost(false);
-        flashStatus("OBS Link connection failed", 4);
+        flashStatus(tr("player.msg.obsConnFailed", null, "OBS Link connection failed"), 4);
       }
     });
   } catch (e) {
     console.warn("OBS Link init failed:", e);
     stopObsHost(false);
-    flashStatus("OBS Link unavailable", 4);
+    flashStatus(tr("player.msg.obsUnavailable", null, "OBS Link unavailable"), 4);
   }
 }
 
@@ -4313,7 +4370,7 @@ if ($("obs-link")) {
   $("obs-link").onclick = () => {
     if (obsHost.on || obsHost.loading) {
       stopObsHost(true);
-      flashStatus("OBS Link stopped");
+      flashStatus(tr("player.msg.obsStopped", null, "OBS Link stopped"));
     } else {
       startObsHost(true);
     }
@@ -4327,7 +4384,9 @@ if ($("obs-audio")) {
     obsHost.audioTunnel = !obsHost.audioTunnel;
     try { localStorage.setItem(OBS_AUDIO_KEY, obsHost.audioTunnel ? "1" : "0"); } catch {}
     syncObsAudioCalls();
-    flashStatus(obsHost.audioTunnel ? "OBS Audio tunnel ON — enable 'Control audio via OBS'" : "OBS Audio tunnel OFF (DataChannel lip-sync only)", 3.5);
+    flashStatus(obsHost.audioTunnel
+      ? tr("player.msg.obsAudioOn", null, "OBS Audio tunnel ON — enable 'Control audio via OBS'")
+      : tr("player.msg.obsAudioOff", null, "OBS Audio tunnel OFF (DataChannel lip-sync only)"), 3.5);
   };
 }
 if ($("obs-delay")) {
@@ -4339,6 +4398,14 @@ if ($("obs-delay")) {
     try { localStorage.setItem(OBS_DELAY_KEY, String(obsHost.audioDelayMs)); } catch {}
     sendObsAudioConfig();
   };
+}
+if (window.Layer2DI18n && typeof window.Layer2DI18n.onChange === "function") {
+  window.Layer2DI18n.onChange(() => {
+    setBg(bgMode);
+    setLipMode(lipMode, false);
+    updateObsLinkUi();
+    updateSavedUi(lastSavedName);
+  });
 }
 window.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o" && $("l2d-file")) {
@@ -4365,7 +4432,7 @@ stage.addEventListener("drop", (e) => {
         startObsViewer(LINK_ID);
         setTimeout(() => {
           if (!P && !obsViewer.rx && !obsViewer.applyingModel) {
-            start().catch((e) => fail("Could not load fallback avatar: " + e.message));
+            start().catch((e) => fail(tr("player.err.loadFallback", { error: e.message }, "Could not load fallback avatar: {error}")));
           }
         }, 4000);
       }
@@ -4381,7 +4448,9 @@ stage.addEventListener("drop", (e) => {
       if (reqHost || autoHost) startObsHost(false, reqHost ? reqHost.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48) : null);
     }
   } catch (e) {
-    fail("Drop a .l2d avatar bundle onto the stage or click Open .l2d. (" + e.message + ")");
+    fail(tr("player.err.dropPrompt", { error: e.message }, "Drop a .l2d avatar bundle onto the stage or click Open .l2d. ({error})"));
   }
 })();
 </script>
+</body>
+</html>

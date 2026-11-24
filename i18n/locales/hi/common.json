@@ -1,0 +1,17 @@
+{
+  "lang.switch": "भाषा",
+  "nav.ariaPrimary": "मुख्य नेविगेशन",
+  "nav.ariaFooter": "फ़ुटर",
+  "nav.ariaToc": "इस पेज पर",
+  "nav.format": "फ़ॉर्मेट",
+  "nav.studio": "Studio",
+  "nav.player": "Player",
+  "nav.avatars": "अवतार",
+  "nav.docs": "दस्तावेज़",
+  "nav.forAi": "AI के लिए",
+  "nav.github": "GitHub",
+  "cta.launchPlayer": "Player खोलें",
+  "common.close": "बंद करें",
+  "common.copy": "कॉपी करें",
+  "common.copied": "कॉपी हो गया!"
+}

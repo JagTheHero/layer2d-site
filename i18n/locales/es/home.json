@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — El motor abierto de avatares 2D",
+  "meta.description": "Especificación gratuita .l2d y reproductor WebGL2 para OBS. Crea, haz rigging y transmite sin costos de licencia.",
+  "hero.titleHtml": "El motor abierto<br>de avatares 2D.",
+  "hero.subtitle": "Especificación gratuita .l2d, estudio en el navegador y reproductor WebGL2 para OBS. Crea, haz rigging y transmite sin costos de licencia.",
+  "hero.openStudio": "Abrir Studio",
+  "avatars.heading": "Avatares",
+  "avatars.liveBadge": "WebGL2 en vivo",
+  "avatars.livePreviewTitle": "Vista previa WebGL2 en vivo de {name}",
+  "avatars.interactivePreviewTitle": "Vista previa interactiva WebGL2 de {name}",
+  "spec.heading": "Especificación abierta",
+  "spec.feature1Html": "Formato <br>.l2d portátil",
+  "spec.feature2Html": "Entorno WebGL2 <br>para OBS",
+  "spec.feature3Html": "Cabello 3D multicapa <br>y física",
+  "lightbox.openPlayer": "Abrir en Player",
+  "lightbox.tryDemoPlayer": "Probar demo en Player",
+  "lightbox.openStudio": "Abrir en Studio",
+  "lightbox.tryDemoStudio": "Probar demo en Studio"
+}

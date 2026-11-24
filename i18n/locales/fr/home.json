@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — Le moteur d'avatars 2D ouvert",
+  "meta.description": "Spécification .l2d libre et lecteur OBS WebGL2. Créez, riggez et streamez sans aucuns frais de licence.",
+  "hero.titleHtml": "Le moteur d'avatars<br>2D ouvert.",
+  "hero.subtitle": "Spécification .l2d libre, studio navigateur et lecteur OBS WebGL2. Créez, riggez et streamez sans aucuns frais de licence.",
+  "hero.openStudio": "Ouvrir Studio",
+  "avatars.heading": "Avatars",
+  "avatars.liveBadge": "WebGL2 en direct",
+  "avatars.livePreviewTitle": "Aperçu WebGL2 en direct de {name}",
+  "avatars.interactivePreviewTitle": "Aperçu WebGL2 interactif de {name}",
+  "spec.heading": "Spécification ouverte",
+  "spec.feature1Html": "Format portable <br>.l2d",
+  "spec.feature2Html": "Moteur OBS <br>WebGL2",
+  "spec.feature3Html": "Cheveux 3D multi-profondeur <br>&amp; physique",
+  "lightbox.openPlayer": "Ouvrir dans Player",
+  "lightbox.tryDemoPlayer": "Essayer la démo Player",
+  "lightbox.openStudio": "Ouvrir dans Studio",
+  "lightbox.tryDemoStudio": "Essayer la démo Studio"
+}

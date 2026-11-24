@@ -1,0 +1,17 @@
+{
+  "lang.switch": "Language",
+  "nav.ariaPrimary": "Primary",
+  "nav.ariaFooter": "Footer",
+  "nav.ariaToc": "On this page",
+  "nav.format": "Format",
+  "nav.studio": "Studio",
+  "nav.player": "Player",
+  "nav.avatars": "Avatars",
+  "nav.docs": "Docs",
+  "nav.forAi": "For AI",
+  "nav.github": "GitHub",
+  "cta.launchPlayer": "Launch Player",
+  "common.close": "Close",
+  "common.copy": "Copy",
+  "common.copied": "Copied!"
+}

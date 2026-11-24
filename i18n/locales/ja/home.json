@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — オープンな2Dアバターエンジン",
+  "meta.description": "無料の .l2d 仕様と WebGL2 OBS プレイヤー。ライセンス料ゼロで構築・リギング・配信できます。",
+  "hero.titleHtml": "オープンな2D<br>アバターエンジン。",
+  "hero.subtitle": "無料の .l2d 仕様、ブラウザ版 Studio、WebGL2 OBS プレイヤー。ライセンス料ゼロで構築・リギング・配信。",
+  "hero.openStudio": "Studio を開く",
+  "avatars.heading": "アバター",
+  "avatars.liveBadge": "Live WebGL2",
+  "avatars.livePreviewTitle": "{name} ライブ WebGL2 プレビュー",
+  "avatars.interactivePreviewTitle": "{name} インタラクティブ WebGL2 プレビュー",
+  "spec.heading": "オープン仕様",
+  "spec.feature1Html": "ポータブルな<br>.l2d フォーマット",
+  "spec.feature2Html": "WebGL2<br>OBS ランタイム",
+  "spec.feature3Html": "多層深度の<br>立体髪 &amp; 物理演算",
+  "lightbox.openPlayer": "Player で開く",
+  "lightbox.tryDemoPlayer": "デモ Player を試す",
+  "lightbox.openStudio": "Studio で開く",
+  "lightbox.tryDemoStudio": "デモ Studio を試す"
+}

@@ -1,0 +1,17 @@
+{
+  "lang.switch": "语言",
+  "nav.ariaPrimary": "主导航",
+  "nav.ariaFooter": "页脚导航",
+  "nav.ariaToc": "本页目录",
+  "nav.format": "格式规范",
+  "nav.studio": "Studio",
+  "nav.player": "Player",
+  "nav.avatars": "虚拟形象",
+  "nav.docs": "文档",
+  "nav.forAi": "AI 指南",
+  "nav.github": "GitHub",
+  "cta.launchPlayer": "启动 Player",
+  "common.close": "关闭",
+  "common.copy": "复制",
+  "common.copied": "已复制！"
+}

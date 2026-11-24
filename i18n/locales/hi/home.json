@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — ओपन 2D अवतार इंजन",
+  "meta.description": "मुफ़्त .l2d स्पेसिफ़िकेशन और WebGL2 OBS प्लेयर। बिना किसी लाइसेंसिंग शुल्क के अवतार बनाएँ, रिग करें और स्ट्रीम करें।",
+  "hero.titleHtml": "ओपन 2D<br>अवतार इंजन।",
+  "hero.subtitle": "मुफ़्त .l2d स्पेसिफ़िकेशन, ब्राउज़र स्टूडियो और WebGL2 OBS प्लेयर। बिना किसी लाइसेंसिंग शुल्क के बनाएँ, रिग करें और स्ट्रीम करें।",
+  "hero.openStudio": "Studio खोलें",
+  "avatars.heading": "अवतार",
+  "avatars.liveBadge": "लाइव WebGL2",
+  "avatars.livePreviewTitle": "{name} लाइव WebGL2 पूर्वावलोकन",
+  "avatars.interactivePreviewTitle": "{name} इंटरैक्टिव WebGL2 पूर्वावलोकन",
+  "spec.heading": "ओपन स्पेसिफ़िकेशन",
+  "spec.feature1Html": "पोर्टेबल <br>.l2d फ़ॉर्मेट",
+  "spec.feature2Html": "WebGL2 <br>OBS रनटाइम",
+  "spec.feature3Html": "मल्टी-डेप्थ <br>3D हेयर और फ़िज़िक्स",
+  "lightbox.openPlayer": "Player में खोलें",
+  "lightbox.tryDemoPlayer": "डेमो Player आज़माएँ",
+  "lightbox.openStudio": "Studio में खोलें",
+  "lightbox.tryDemoStudio": "डेमो Studio आज़माएँ"
+}

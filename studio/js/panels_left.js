@@ -10,6 +10,25 @@
  */
 
 import { hasSceneGraph, buildSceneGraph } from "./scene_graph.js";
+import { t } from "./i18n_bridge.js";
+
+const FOLDER_KEYS = {
+  Head: "tree.folderHead",
+  Body: "tree.folderBody",
+  Layers: "tree.folderLayers",
+  "Wolf Ears": "tree.folderWolfEars",
+  Eyes: "tree.folderEyes",
+  Hair: "tree.folderHair",
+  Face: "tree.folderFace",
+  "Haori Jacket": "tree.folderHaori",
+  Tail: "tree.folderTail",
+  Accessories: "tree.folderAccessories",
+  Imported: "tree.folderImported",
+};
+function localizeFolder(folder) {
+  const k = FOLDER_KEYS[folder];
+  return k ? t(k, null, folder) : folder;
+}
 
 export class LeftPanels {
   constructor(state, engine, onAction) {
@@ -127,10 +146,11 @@ export class LeftPanels {
       const collapsed = this.state.selectedFolderCollapsed.has(folder) && !q;
       const fRow = document.createElement("div");
       fRow.className = "folder-row" + (collapsed ? " collapsed" : "");
+      const folderDisp = localizeFolder(folder);
       fRow.innerHTML = `
         <svg class="tree-chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5l3 3 3-3"/></svg>
         <svg class="tree-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4.5h4.5l1.5 1.5H14v7H2V4.5z"/></svg>
-        <span class="layer-name">${folder}</span>
+        <span class="layer-name">${folderDisp}</span>
         <span class="layer-z">${items.length}</span>
       `;
       fRow.addEventListener("click", () => {
@@ -148,13 +168,13 @@ export class LeftPanels {
         row.className = "layer-row" + (isSel ? " selected" : "") + (isHid ? " is-hidden" : "");
         row.draggable = true;
         row.dataset.idx = String(idx);
-        const badge = L.clip ? `<span class="layer-tag" title="Clipped to ${L.clip}">C</span>`
-          : L.behind ? `<span class="layer-tag" title="Behind occlusion mask">B</span>` : "";
+        const badge = L.clip ? `<span class="layer-tag" title="${t("tree.clippedTo", { clip: L.clip }, "Clipped to {clip}")}">C</span>`
+          : L.behind ? `<span class="layer-tag" title="${t("tree.behindMask", null, "Behind occlusion mask")}">B</span>` : "";
         row.innerHTML = `
           <svg class="tree-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="2.5" width="10" height="11" rx="1"/></svg>
           <span class="layer-name" title="${label}">${label}</span>
           ${badge}
-          <button class="eye-btn" type="button" title="Toggle Visibility">${isHid ? eyeSvgOff : eyeSvgOn}</button>
+          <button class="eye-btn" type="button" title="${t("tree.toggleVisibility", null, "Toggle Visibility")}">${isHid ? eyeSvgOff : eyeSvgOn}</button>
           <span class="layer-z">${idx}</span>
         `;
         row.addEventListener("click", (e) => {
@@ -214,7 +234,7 @@ export class LeftPanels {
     // Root drop zone for easy unparenting via drag-and-drop
     const rootDrop = document.createElement("div");
     rootDrop.className = "tree-root-drop";
-    rootDrop.textContent = "Scene Graph · Drop here to unparent (Root)";
+    rootDrop.textContent = t("tree.rootDrop", null, "Scene Graph · Drop here to unparent (Root)");
     rootDrop.addEventListener("dragover", (e) => {
       e.preventDefault();
       rootDrop.classList.add("drag-reparent");
@@ -249,10 +269,10 @@ export class LeftPanels {
         row.draggable = true;
         row.dataset.nodeId = id;
         row.innerHTML = `
-          ${hasKids ? `<button class="chev-btn" type="button" title="Expand / Collapse">${chevSvg}</button>` : `<span class="chev-spacer"></span>`}
+          ${hasKids ? `<button class="chev-btn" type="button" title="${t("tree.expandCollapse", null, "Expand / Collapse")}">${chevSvg}</button>` : `<span class="chev-spacer"></span>`}
           ${nodeSvg}
           <span class="layer-name" title="${node.name} (${node.id})">${node.name || node.id}</span>
-          <span class="layer-tag node-tag" title="Transform Group (${kids.length} children)">GRP</span>
+          <span class="layer-tag node-tag" title="${t("tree.groupTooltip", { count: kids.length }, "Transform Group ({count} children)")}">${t("tree.grpTag", null, "GRP")}</span>
           <span class="layer-z">${kids.length}</span>
         `;
         row.addEventListener("click", (e) => {
@@ -294,14 +314,14 @@ export class LeftPanels {
         row.draggable = true;
         row.dataset.idx = String(idx);
         row.dataset.layerId = L.id;
-        const badge = L.clip ? `<span class="layer-tag" title="Clipped to ${L.clip}">C</span>`
-          : L.behind ? `<span class="layer-tag" title="Behind occlusion mask">B</span>` : "";
+        const badge = L.clip ? `<span class="layer-tag" title="${t("tree.clippedTo", { clip: L.clip }, "Clipped to {clip}")}">C</span>`
+          : L.behind ? `<span class="layer-tag" title="${t("tree.behindMask", null, "Behind occlusion mask")}">B</span>` : "";
         row.innerHTML = `
-          ${hasKids ? `<button class="chev-btn" type="button" title="Expand / Collapse">${chevSvg}</button>` : `<span class="chev-spacer"></span>`}
+          ${hasKids ? `<button class="chev-btn" type="button" title="${t("tree.expandCollapse", null, "Expand / Collapse")}">${chevSvg}</button>` : `<span class="chev-spacer"></span>`}
           ${layerSvg}
           <span class="layer-name" title="${label}">${label}</span>
           ${badge}
-          <button class="eye-btn" type="button" title="Toggle Visibility">${isHid ? eyeSvgOff : eyeSvgOn}</button>
+          <button class="eye-btn" type="button" title="${t("tree.toggleVisibility", null, "Toggle Visibility")}">${isHid ? eyeSvgOff : eyeSvgOn}</button>
           <span class="layer-z">${idx}</span>
         `;
         row.addEventListener("click", (e) => {
@@ -372,7 +392,7 @@ export class LeftPanels {
       return {
         u: clamp01((normA + 1) * 0.5),
         idx,
-        label: `Angle X ${(normA * 32.5).toFixed(1)}°`,
+        label: t("param.angleXDeg", { deg: (normA * 32.5).toFixed(1) }, "Angle X {deg}°"),
       };
     });
 
@@ -380,13 +400,13 @@ export class LeftPanels {
     const pitchKeys = pitchSamples.map((s, idx) => ({
       u: clamp01((s.pitch + 1) * 0.5),
       idx,
-      label: `Angle Y ${(s.pitch * 30).toFixed(1)}°`,
+      label: t("param.angleYDeg", { deg: (s.pitch * 30).toFixed(1) }, "Angle Y {deg}°"),
       hasEdits: Boolean(s.layers && Object.keys(s.layers).length),
     }));
 
     return [
       {
-        id: "a", name: "Angle X", min: -32.5, max: 32.5, defaultVal: 0,
+        id: "a", name: t("param.angleX", null, "Angle X"), min: -32.5, max: 32.5, defaultVal: 0,
         getVal: () => st.params.a * 32.5,
         fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
         keys: yawKeys,
@@ -404,7 +424,7 @@ export class LeftPanels {
         },
       },
       {
-        id: "pitch", name: "Angle Y", min: -30, max: 30, defaultVal: 0,
+        id: "pitch", name: t("param.angleY", null, "Angle Y"), min: -30, max: 30, defaultVal: 0,
         getVal: () => st.params.pitch * 30,
         fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
         keys: pitchKeys,
@@ -423,7 +443,7 @@ export class LeftPanels {
         },
       },
       {
-        id: "roll", name: "Angle Z", min: -20, max: 20, defaultVal: 0,
+        id: "roll", name: t("param.angleZ", null, "Angle Z"), min: -20, max: 20, defaultVal: 0,
         getVal: () => (st.params.roll * 180) / Math.PI,
         fmt: (v) => (v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)),
         keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
@@ -433,7 +453,7 @@ export class LeftPanels {
         onReset: () => { st.params.roll = 0; st.emit("params:changed"); },
       },
       {
-        id: "eyes", name: "Eye Open", min: 0, max: 1.25, defaultVal: 1.0,
+        id: "eyes", name: t("param.eyeOpen", null, "Eye Open"), min: 0, max: 1.25, defaultVal: 1.0,
         getVal: () => st.params.eyes,
         fmt: (v) => v.toFixed(2),
         keys: [{ u: 0 }, { u: 0.8 }, { u: 1 }],
@@ -443,7 +463,7 @@ export class LeftPanels {
         onReset: () => { st.params.eyes = 1.0; st.emit("params:changed"); },
       },
       {
-        id: "eyeX", name: "Eye X", min: -1, max: 1, defaultVal: 0,
+        id: "eyeX", name: t("param.eyeX", null, "Eye X"), min: -1, max: 1, defaultVal: 0,
         getVal: () => st.params.eyeX || 0,
         fmt: (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
         keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
@@ -453,7 +473,7 @@ export class LeftPanels {
         onReset: () => { st.params.eyeX = 0; st.emit("params:changed"); },
       },
       {
-        id: "eyeY", name: "Eye Y", min: -1, max: 1, defaultVal: 0,
+        id: "eyeY", name: t("param.eyeY", null, "Eye Y"), min: -1, max: 1, defaultVal: 0,
         getVal: () => st.params.eyeY || 0,
         fmt: (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
         keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
@@ -463,7 +483,7 @@ export class LeftPanels {
         onReset: () => { st.params.eyeY = 0; st.emit("params:changed"); },
       },
       {
-        id: "tailSway", name: "Tail Sway", min: -1, max: 1, defaultVal: 0,
+        id: "tailSway", name: t("param.tailSway", null, "Tail Sway"), min: -1, max: 1, defaultVal: 0,
         getVal: () => st.params.tailSway,
         fmt: (v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2)),
         keys: [{ u: 0 }, { u: 0.5 }, { u: 1 }],
@@ -484,7 +504,7 @@ export class LeftPanels {
     const lbl = document.createElement("span");
     lbl.className = "param-name";
     lbl.textContent = d.name;
-    lbl.title = `Double-click to reset ${d.name}`;
+    lbl.title = t("param.resetTip", { name: d.name }, "Double-click to reset {name}");
     lbl.addEventListener("dblclick", () => d.onReset());
     nameCell.appendChild(lbl);
 
@@ -495,34 +515,34 @@ export class LeftPanels {
       addB.type = "button";
       addB.className = "kf-mini-btn";
       addB.textContent = "+";
-      addB.title = `Add ${d.name} Keyform at current slider value`;
+      addB.title = t("param.addKeyTip", { name: d.name }, "Add {name} Keyform at current slider value");
       addB.addEventListener("click", (e) => { e.stopPropagation(); d.onAddKey(); });
       const delB = document.createElement("button");
       delB.type = "button";
       delB.className = "kf-mini-btn";
       delB.textContent = "−";
-      delB.title = `Delete active ${d.name} Keyform`;
+      delB.title = t("param.delKeyTip", { name: d.name }, "Delete active {name} Keyform");
       delB.addEventListener("click", (e) => { e.stopPropagation(); d.onDelKey(); });
       kfBtns.append(addB, delB);
       nameCell.appendChild(kfBtns);
     } else if (d.isBlend) {
       row.classList.add("has-kf-btns", "is-blend-param");
       lbl.style.cursor = "pointer";
-      lbl.title = `${d.name} — click to sculpt, double-click to reset`;
+      lbl.title = t("param.blendTip", { name: d.name }, "{name} — click to sculpt, double-click to reset");
       lbl.addEventListener("click", () => d.onEditToggle());
       const bsBtns = document.createElement("span");
       bsBtns.className = "kf-mini-btns";
       const editB = document.createElement("button");
       editB.type = "button";
       editB.className = "kf-mini-btn blend-edit-btn";
-      editB.title = `Sculpt Blend Shape "${d.name}" (activates target & sets weight to 1)`;
+      editB.title = t("param.sculptBlendTip", { name: d.name }, "Sculpt Blend Shape \"{name}\" (activates target & sets weight to 1)");
       editB.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.5 2.5l2 2-7.5 7.5-3 .8.8-3 7.7-7.3z"/></svg>`;
       editB.addEventListener("click", (e) => { e.stopPropagation(); d.onEditToggle(); });
       const delB = document.createElement("button");
       delB.type = "button";
       delB.className = "kf-mini-btn";
       delB.textContent = "×";
-      delB.title = `Delete Blend Shape "${d.name}"`;
+      delB.title = t("param.delBlendTip", { name: d.name }, "Delete Blend Shape \"{name}\"");
       delB.addEventListener("click", (e) => { e.stopPropagation(); d.onDelete(); });
       bsBtns.append(editB, delB);
       nameCell.appendChild(bsBtns);
@@ -543,7 +563,7 @@ export class LeftPanels {
       const dm = document.createElement("span");
       dm.className = "param-diamond" + (k.hasEdits ? " has-edits" : "");
       dm.style.left = `${k.u * 100}%`;
-      if (k.label) dm.title = `Click to edit ${k.label} (drag track to scrub)`;
+      if (k.label) dm.title = t("param.editKeyTip", { label: k.label }, "Click to edit {label} (drag track to scrub)");
       track.appendChild(dm);
       diamonds.push({ el: dm, key: k });
     }
@@ -651,7 +671,7 @@ export class LeftPanels {
     // Mouth Vowel row
     const vRow = document.createElement("div");
     vRow.className = "param-row";
-    vRow.innerHTML = `<span class="param-name">Mouth Vowel</span>`;
+    vRow.innerHTML = `<span class="param-name">${t("param.mouthVowel", null, "Mouth Vowel")}</span>`;
     const vBar = document.createElement("div");
     vBar.className = "vowel-bar";
     vBar.style.gridColumn = "span 2";
@@ -675,12 +695,12 @@ export class LeftPanels {
     const bsHead = document.createElement("div");
     bsHead.className = "param-section-head";
     const bsTitle = document.createElement("span");
-    bsTitle.textContent = "BLEND SHAPES";
+    bsTitle.textContent = t("param.blendShapes", null, "BLEND SHAPES");
     const bsAdd = document.createElement("button");
     bsAdd.type = "button";
     bsAdd.className = "btn-xs";
-    bsAdd.textContent = "+ New";
-    bsAdd.title = "Create a new additive Blend Shape parameter";
+    bsAdd.textContent = t("param.newBtn", null, "+ New");
+    bsAdd.title = t("param.newBtnTitle", null, "Create a new additive Blend Shape parameter");
     bsAdd.addEventListener("click", () => this.onAction("new-blend-shape"));
     bsHead.append(bsTitle, bsAdd);
     el.appendChild(bsHead);
@@ -689,7 +709,7 @@ export class LeftPanels {
     if (!shapes.length) {
       const empty = document.createElement("div");
       empty.className = "param-empty-note";
-      empty.textContent = "Additive deformers that layer cleanly over Angle X & Y. Click + New to sculpt one.";
+      empty.textContent = t("param.emptyNote", null, "Additive deformers that layer cleanly over Angle X & Y. Click + New to sculpt one.");
       el.appendChild(empty);
     } else {
       for (const bs of shapes) {

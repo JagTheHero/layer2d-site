@@ -10,6 +10,7 @@
 
 import { lerpGrids } from "./warp_math.js";
 import { wouldCreateCycle } from "./scene_graph.js";
+import { t } from "./i18n_bridge.js";
 
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
@@ -40,7 +41,7 @@ export function createDefaultStudio(pack) {
     clips: [
       {
         id: "idle_showcase",
-        name: "Idle Showcase",
+        name: t("state.defaultClipTitle", null, "Idle Showcase"),
         fps: 30,
         duration: 5.0,
         loop: true,
@@ -494,15 +495,15 @@ export class StudioState {
 
   setParent(itemId, newParentId) {
     const P = this.pack;
-    if (!P || !itemId) return { ok: false, reason: "Invalid item" };
+    if (!P || !itemId) return { ok: false, reason: t("state.invalidItem", null, "Invalid item") };
     const cleanParent = newParentId || null;
     if (cleanParent && wouldCreateCycle(P, itemId, cleanParent)) {
-      return { ok: false, reason: "Cannot parent an item inside itself or its own descendant" };
+      return { ok: false, reason: t("state.cycleParent", null, "Cannot parent an item inside itself or its own descendant") };
     }
     const node = (P.nodes || []).find((n) => n.id === itemId);
     const layer = (P.layers || []).find((l) => l.id === itemId);
     const obj = node || layer;
-    if (!obj) return { ok: false, reason: `Item ${itemId} not found` };
+    if (!obj) return { ok: false, reason: t("state.itemNotFound", { id: itemId }, "Item {id} not found") };
     if ((obj.parent || null) === cleanParent) return { ok: true, unchanged: true };
 
     this.pushUndo("Reparent Scene Node");
@@ -609,7 +610,7 @@ export class StudioState {
 
   addYawKeyform(normA = this.params.a) {
     const P = this.pack;
-    if (!P || !P.samples || !P.samples.length) return { ok: false, reason: "No yaw samples loaded" };
+    if (!P || !P.samples || !P.samples.length) return { ok: false, reason: t("state.noYawSamples", null, "No yaw samples loaded") };
     const na = clamp(normA, -1, 1);
     const turn = P.head.turn;
     const ang = +(na < 0 ? -na * turn.R : na * turn.L).toFixed(5);
@@ -619,7 +620,7 @@ export class StudioState {
       const existNorm = this._normAngleOf(P.samples[i].angle);
       if (Math.abs(existNorm - na) < 0.035) {
         this.snapToSample(i);
-        return { ok: false, reason: `Keyform already exists near ${(existNorm * 32.5).toFixed(1)}° (snapped to it)` };
+        return { ok: false, reason: t("state.yawExists", { deg: (existNorm * 32.5).toFixed(1) }, "Keyform already exists near {deg}° (snapped to it)") };
       }
     }
 
@@ -688,11 +689,11 @@ export class StudioState {
   deleteYawKeyform(idx = this.activeSampleIdx) {
     const P = this.pack;
     if (!P || !P.samples || P.samples.length <= 2) {
-      return { ok: false, reason: "Need at least 2 Angle X keyforms" };
+      return { ok: false, reason: t("state.minYawKeys", null, "Need at least 2 Angle X keyforms") };
     }
-    if (idx < 0 || idx >= P.samples.length) return { ok: false, reason: "Invalid Angle X keyform" };
+    if (idx < 0 || idx >= P.samples.length) return { ok: false, reason: t("state.invalidYawKey", null, "Invalid Angle X keyform") };
     if (Math.abs(P.samples[idx].angle) < 1e-4) {
-      return { ok: false, reason: "Cannot delete the 0° center rest keyform" };
+      return { ok: false, reason: t("state.noDelCenterYaw", null, "Cannot delete the 0° center rest keyform") };
     }
     this.pushUndo("Delete Angle X Keyform");
     P.samples.splice(idx, 1);
@@ -761,13 +762,13 @@ export class StudioState {
   }
 
   addPitchKeyform(pitchVal = this.params.pitch) {
-    if (!this.pack) return { ok: false, reason: "No model loaded" };
+    if (!this.pack) return { ok: false, reason: t("state.noModelLoaded", null, "No model loaded") };
     const p = +clamp(pitchVal, -1, 1).toFixed(4);
     const ps = this.ensurePitchSamples();
     for (let i = 0; i < ps.length; i++) {
       if (Math.abs(ps[i].pitch - p) < 0.04) {
         this.snapToPitchSample(i);
-        return { ok: false, reason: `Angle Y keyform already exists near ${(ps[i].pitch * 30).toFixed(1)}° (snapped to it)` };
+        return { ok: false, reason: t("state.pitchExists", { deg: (ps[i].pitch * 30).toFixed(1) }, "Angle Y keyform already exists near {deg}° (snapped to it)") };
       }
     }
     this.pushUndo("Add Angle Y Keyform");
@@ -820,9 +821,9 @@ export class StudioState {
 
   deletePitchKeyform(idx = this.activePitchIdx) {
     const ps = this.pack && this.pack.pitchSamples;
-    if (!ps || ps.length <= 2) return { ok: false, reason: "Need at least 2 Angle Y keyforms" };
-    if (idx < 0 || idx >= ps.length) return { ok: false, reason: "Invalid Angle Y keyform" };
-    if (Math.abs(ps[idx].pitch) < 1e-4) return { ok: false, reason: "Cannot delete the 0° center Angle Y keyform" };
+    if (!ps || ps.length <= 2) return { ok: false, reason: t("state.minPitchKeys", null, "Need at least 2 Angle Y keyforms") };
+    if (idx < 0 || idx >= ps.length) return { ok: false, reason: t("state.invalidPitchKey", null, "Invalid Angle Y keyform") };
+    if (Math.abs(ps[idx].pitch) < 1e-4) return { ok: false, reason: t("state.noDelCenterPitch", null, "Cannot delete the 0° center Angle Y keyform") };
     this.pushUndo("Delete Angle Y Keyform");
     ps.splice(idx, 1);
     const nextIdx = Math.max(0, Math.min(ps.length - 1, idx - 1));
@@ -924,7 +925,7 @@ export class StudioState {
       const bs = this.getBlendShape(this.rigTarget.id);
       if (bs) {
         const w = this.params.blend[bs.id] ?? bs.default ?? 0;
-        return `Blend: ${bs.name} (${w.toFixed(2)})`;
+        return t("param.blendTarget", { name: bs.name, weight: w.toFixed(2) }, "Blend: {name} ({weight})");
       }
     }
     if (this.rigTarget.type === "pitch") {
@@ -932,13 +933,13 @@ export class StudioState {
       const s = ps[this.activePitchIdx];
       if (s && Math.abs(s.pitch) > 1e-4) {
         const d = s.pitch * 30;
-        return `Angle Y ${d >= 0 ? "+" : ""}${d.toFixed(1)}°`;
+        return t("param.angleYDeg", { deg: `${d >= 0 ? "+" : ""}${d.toFixed(1)}` }, "Angle Y {deg}°");
       }
     }
     const S = this.pack.samples || [];
     const s = S[this.activeSampleIdx];
     const deg = s ? this._normAngleOf(s.angle) * 32.5 : this.params.a * 32.5;
-    return `Angle X ${deg >= 0 ? "+" : ""}${deg.toFixed(1)}°`;
+    return t("param.angleXDeg", { deg: `${deg >= 0 ? "+" : ""}${deg.toFixed(1)}` }, "Angle X {deg}°");
   }
 
   /**

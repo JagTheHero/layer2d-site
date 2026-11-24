@@ -56,6 +56,19 @@
     });
   }
 
+  function t(key, vars, fallback) {
+    if (window.Layer2DI18n && typeof window.Layer2DI18n.t === "function") {
+      return window.Layer2DI18n.t(key, vars, fallback);
+    }
+    var s = fallback !== undefined ? fallback : key;
+    if (vars) {
+      s = s.replace(/\{([a-zA-Z0-9_]+)\}/g, function (m, k) {
+        return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m;
+      });
+    }
+    return s;
+  }
+
   function mountLiveCard(card) {
     if (card.dataset.liveMounted) return;
     var url = card.getAttribute("data-live-url");
@@ -65,7 +78,7 @@
     var frame = document.createElement("iframe");
     frame.className = "live-avatar";
     frame.src = url;
-    frame.title = (card.getAttribute("data-name") || "Avatar") + " live WebGL2 preview";
+    frame.title = t("avatars.livePreviewTitle", { name: card.getAttribute("data-name") || "Avatar" }, "{name} live WebGL2 preview");
     frame.setAttribute("allowtransparency", "true");
     frame.setAttribute("tabindex", "-1");
     liveFrames.set(frame, card);
@@ -125,10 +138,16 @@
       nameEl.textContent = name;
       var isDemo = model === "test-signal";
       openLink.href = "player/?model=test-signal.l2d";
-      openLink.textContent = isDemo ? "Open in Player" : "Try Demo Player";
+      openLink.setAttribute("data-i18n", isDemo ? "lightbox.openPlayer" : "lightbox.tryDemoPlayer");
+      openLink.textContent = isDemo
+        ? t("lightbox.openPlayer", null, "Open in Player")
+        : t("lightbox.tryDemoPlayer", null, "Try Demo Player");
       if (studioLink) {
         studioLink.href = "studio/?model=../player/test-signal.l2d";
-        studioLink.textContent = isDemo ? "Open in Studio" : "Try Demo Studio";
+        studioLink.setAttribute("data-i18n", isDemo ? "lightbox.openStudio" : "lightbox.tryDemoStudio");
+        studioLink.textContent = isDemo
+          ? t("lightbox.openStudio", null, "Open in Studio")
+          : t("lightbox.tryDemoStudio", null, "Try Demo Studio");
       }
       dialog.showModal();
       if (isDemo && liveUrl && lbStage) {
@@ -136,7 +155,7 @@
         lbFrame = document.createElement("iframe");
         lbFrame.className = "lb-live";
         lbFrame.src = liveUrl;
-        lbFrame.title = name + " interactive WebGL2 preview";
+        lbFrame.title = t("avatars.interactivePreviewTitle", { name: name }, "{name} interactive WebGL2 preview");
         lbFrame.setAttribute("allowtransparency", "true");
         liveFrames.set(lbFrame, lbStage);
         lbStage.insertBefore(lbFrame, lbStage.querySelector(".lb-close"));

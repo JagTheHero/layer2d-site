@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — The open 2D avatar engine",
+  "meta.description": "Free .l2d specification and WebGL2 OBS player. Build, rig, and stream with zero licensing fees.",
+  "hero.titleHtml": "The open 2D<br>avatar engine.",
+  "hero.subtitle": "Free .l2d specification, browser studio, and WebGL2 OBS player. Build, rig, and stream with zero licensing fees.",
+  "hero.openStudio": "Open Studio",
+  "avatars.heading": "Avatars",
+  "avatars.liveBadge": "Live WebGL2",
+  "avatars.livePreviewTitle": "{name} live WebGL2 preview",
+  "avatars.interactivePreviewTitle": "{name} interactive WebGL2 preview",
+  "spec.heading": "Open specification",
+  "spec.feature1Html": "Portable <br>.l2d format",
+  "spec.feature2Html": "WebGL2 <br>OBS runtime",
+  "spec.feature3Html": "Multi-depth <br>3D hair &amp; physics",
+  "lightbox.openPlayer": "Open in Player",
+  "lightbox.tryDemoPlayer": "Try Demo Player",
+  "lightbox.openStudio": "Open in Studio",
+  "lightbox.tryDemoStudio": "Try Demo Studio"
+}

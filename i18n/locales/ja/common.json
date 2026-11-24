@@ -1,0 +1,17 @@
+{
+  "lang.switch": "言語",
+  "nav.ariaPrimary": "メインナビゲーション",
+  "nav.ariaFooter": "フッター",
+  "nav.ariaToc": "このページの内容",
+  "nav.format": "フォーマット",
+  "nav.studio": "Studio",
+  "nav.player": "Player",
+  "nav.avatars": "アバター",
+  "nav.docs": "ドキュメント",
+  "nav.forAi": "AI向けガイド",
+  "nav.github": "GitHub",
+  "cta.launchPlayer": "Player を起動",
+  "common.close": "閉じる",
+  "common.copy": "コピー",
+  "common.copied": "コピーしました！"
+}

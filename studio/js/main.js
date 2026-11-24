@@ -24,6 +24,7 @@ import {
   smoothGrid,
 } from "./warp_math.js";
 import { hasSceneGraph, buildSceneGraph, wouldCreateCycle } from "./scene_graph.js";
+import { t, onLangChange } from "./i18n_bridge.js";
 
 const state = new StudioState();
 const glCanvas = document.getElementById("gl-canvas");
@@ -80,9 +81,9 @@ async function toggleMic() {
     mic.bins = new Uint8Array(mic.analyser.frequencyBinCount);
     mic.on = true;
     btn.classList.add("live");
-    showToast("Mic lip-sync active — speak to test AEIOU vowels");
+    showToast(t("toast.micActive", null, "Mic lip-sync active — speak to test AEIOU vowels"));
   } catch (e) {
-    showToast(`Microphone unavailable: ${e.message}`);
+    showToast(t("toast.micUnavailable", { error: e.message }, "Microphone unavailable: {error}"));
   }
 }
 
@@ -125,9 +126,9 @@ async function toggleCam() {
     cam.on = true;
     state.snapToKeyform = false;
     btn.classList.add("live");
-    showToast("Webcam head-tracking preview active");
+    showToast(t("toast.camActive", null, "Webcam head-tracking preview active"));
   } catch (e) {
-    showToast(`Webcam unavailable: ${e.message}`);
+    showToast(t("toast.camUnavailable", { error: e.message }, "Webcam unavailable: {error}"));
   }
 }
 
@@ -158,14 +159,14 @@ function stepCam() {
 
 /* ---------- Core File Load / Save / Import Workflows ---------- */
 async function openL2DBuffer(buf, fileName, fileHandle = null) {
-  showToast(`Loading ${fileName}…`, 15000);
+  showToast(t("toast.loadingFile", { name: fileName }, "Loading {name}…"), 15000);
   const { manifest, pack, studio, textures, preview } = await readL2D(buf);
   await engine.load(pack, textures, (done, total) => {
-    toastEl.textContent = `Loading ${fileName} (${done}/${total})…`;
+    toastEl.textContent = t("toast.loadingProgress", { name: fileName, done, total }, "Loading {name} ({done}/{total})…");
   });
   state.loadDocument({ pack, manifest, textures, studio, preview, fileName, fileHandle });
   document.getElementById("doc-title").textContent = fileName;
-  showToast(`Loaded ${manifest.name || fileName} (${pack.layers.length} layers, ${pack.samples.length} yaw keyforms)`);
+  showToast(t("toast.loadedModel", { name: manifest.name || fileName, layers: pack.layers.length, samples: pack.samples.length }, "Loaded {name} ({layers} layers, {samples} yaw keyforms)"));
 }
 
 async function openL2DFromURL(url, label) {
@@ -175,12 +176,12 @@ async function openL2DFromURL(url, label) {
 }
 
 async function importPSDFile(file) {
-  showToast(`Parsing PSD ${file.name}…`, 30000);
+  showToast(t("toast.parsingPsd", { name: file.name }, "Parsing PSD {name}…"), 30000);
   const buf = await file.arrayBuffer();
   const psd = parsePSD(buf);
-  if (!psd.layers.length) throw new Error("No visible raster layers found in PSD.");
+  if (!psd.layers.length) throw new Error(t("err.psdNoRaster", null, "No visible raster layers found in PSD."));
   const baseName = file.name.replace(/\.psd$/i, "");
-  showToast(`Rigging ${psd.layers.length} layers (${psd.width}×${psd.height})…`, 30000);
+  showToast(t("toast.riggingPsd", { count: psd.layers.length, w: psd.width, h: psd.height }, "Rigging {count} layers ({w}×{h})…"), 30000);
   const { pack, textures, studio } = await buildPackFromPSD(psd, baseName, { samples: 9 });
   await engine.load(pack, textures);
   const fileName = `${baseName.toLowerCase().replace(/[^a-z0-9_-]+/g, "_") || "avatar"}.l2d`;
@@ -193,7 +194,7 @@ async function importPSDFile(file) {
     fileName,
   });
   document.getElementById("doc-title").textContent = fileName;
-  showToast(`Imported PSD: ${pack.layers.length} layers rigged across ${pack.samples.length} yaw keyforms`);
+  showToast(t("toast.importedPsd", { layers: pack.layers.length, samples: pack.samples.length }, "Imported PSD: {layers} layers rigged across {samples} yaw keyforms"));
 }
 
 async function addImageLayer(file) {
@@ -226,7 +227,7 @@ async function addImageLayer(file) {
   state.studio.layers[id] = { label: id, folder: "Imported" };
   state.selectLayer(state.pack.layers.length - 1);
   state.emit("pack:mutated", { structural: true });
-  showToast(`Added layer ${id} (${im.width}×${im.height})`);
+  showToast(t("toast.addedLayer", { id, w: im.width, h: im.height }, "Added layer {id} ({w}×{h})"));
 }
 
 async function replaceSelectedTexture(file) {
@@ -248,7 +249,7 @@ async function replaceSelectedTexture(file) {
   L.h = im.height;
   engine.setTextureFromImage(L.id, im, true);
   state.emit("pack:mutated", { structural: true });
-  showToast(`Replaced texture for ${L.id} (${im.width}×${im.height})`);
+  showToast(t("toast.replacedTex", { id: L.id, w: im.width, h: im.height }, "Replaced texture for {id} ({w}×{h})"));
 }
 
 async function importFXPiece(file) {
@@ -256,10 +257,10 @@ async function importFXPiece(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const im = await loadImageFromBytes(bytes, file.name);
   const base = file.name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_]+/g, "_") || "fx";
-  const colsStr = prompt("Flipbook columns (enter 1 for a static overlay image):", "1");
+  const colsStr = prompt(t("prompt.fxCols", null, "Flipbook columns (enter 1 for a static overlay image):"), "1");
   const cols = Math.max(1, parseInt(colsStr || "1", 10) || 1);
-  const rows = cols > 1 ? Math.max(1, parseInt(prompt("Flipbook rows:", "1") || "1", 10) || 1) : 1;
-  const fps = cols * rows > 1 ? Math.max(1, parseInt(prompt("Flipbook FPS:", "12") || "12", 10) || 12) : 0;
+  const rows = cols > 1 ? Math.max(1, parseInt(prompt(t("prompt.fxRows", null, "Flipbook rows:"), "1") || "1", 10) || 1) : 1;
+  const fps = cols * rows > 1 ? Math.max(1, parseInt(prompt(t("prompt.fxFps", null, "Flipbook FPS:"), "12") || "12", 10) || 12) : 0;
 
   state.pushUndo("Import FX Piece");
   const id = `FX_${base}`;
@@ -281,12 +282,12 @@ async function importFXPiece(file) {
     F.add = [...new Set([...(F.add || []), id])];
   }
   state.emit("pack:mutated", { structural: true });
-  showToast(`Imported FX piece ${id}`);
+  showToast(t("toast.importedFx", { id }, "Imported FX piece {id}"));
 }
 
 async function saveOrExportL2D(forcePicker = false) {
   if (!state.pack) return;
-  showToast("Packing & hashing .l2d bundle…", 15000);
+  showToast(t("toast.packingL2d", null, "Packing & hashing .l2d bundle…"), 15000);
   const preview = state.preview || (await engine.capturePreviewPNG(600, 800));
   const { bytes, manifest } = await buildL2D({
     pack: state.pack,
@@ -298,11 +299,11 @@ async function saveOrExportL2D(forcePicker = false) {
   state.manifest = manifest;
   state.preview = preview;
   const res = await saveBytesToDisk(bytes, state.fileName || `${manifest.id}.l2d`, forcePicker ? null : state.fileHandle);
-  if (res.mode === "cancelled") { showToast("Export cancelled"); return; }
+  if (res.mode === "cancelled") { showToast(t("toast.exportCancelled", null, "Export cancelled")); return; }
   if (res.handle) state.fileHandle = res.handle;
   state.dirty = false;
   await saveAutosave(bytes, state.fileName);
-  showToast(`Saved ${state.fileName} (${(bytes.length / 1e6).toFixed(2)} MB, SHA-256 verified)`);
+  showToast(t("toast.savedL2d", { name: state.fileName, mb: (bytes.length / 1e6).toFixed(2) }, "Saved {name} ({mb} MB, SHA-256 verified)"));
 }
 
 /* ---------- Central Action Dispatcher ---------- */
@@ -314,7 +315,7 @@ async function handleAction(act) {
       if (typeof window.showOpenFilePicker === "function") {
         try {
           const [handle] = await window.showOpenFilePicker({
-            types: [{ description: "Layer2D Avatar (.l2d)", accept: { "application/zip": [".l2d"] } }],
+            types: [{ description: t("picker.l2dDesc", null, "Layer2D Avatar (.l2d)"), accept: { "application/zip": [".l2d"] } }],
           });
           const f = await handle.getFile();
           return await openL2DBuffer(await f.arrayBuffer(), f.name, handle);
@@ -341,12 +342,12 @@ async function handleAction(act) {
       }
     } else if (act === "restore-draft") {
       const draft = await loadAutosave();
-      if (!draft) { showToast("No autosave draft found"); return; }
+      if (!draft) { showToast(t("toast.noAutosave", null, "No autosave draft found")); return; }
       await openL2DBuffer(draft.bytes.buffer, draft.name || "autosave.l2d");
     } else if (act === "undo") {
-      if (st.undo()) showToast("Undo");
+      if (st.undo()) showToast(t("toast.undo", null, "Undo"));
     } else if (act === "redo") {
-      if (st.redo()) showToast("Redo");
+      if (st.redo()) showToast(t("toast.redo", null, "Redo"));
     } else if (act === "dup-layer" && P) {
       const L = st.getSelectedLayer();
       if (!L) return;
@@ -372,12 +373,14 @@ async function handleAction(act) {
       st.studio.layers[nid] = { ...(st.studio.layers[L.id] || { folder: "Layers" }), label: nid };
       st.selectLayer(ins);
       st.emit("pack:mutated", { structural: true });
-      showToast(`Duplicated ${L.id} → ${nid}`);
+      showToast(t("toast.duplicatedLayer", { from: L.id, to: nid }, "Duplicated {from} → {to}"));
     } else if (act === "add-group" && P) {
       const selL = st.getSelectedLayer();
       const selN = st.getSelectedNode();
-      const defName = selL ? `${selL.id} Group` : `Group ${(P.nodes?.length || 0) + 1}`;
-      const name = prompt("New Transform Group name (e.g. Eye R, Head Rig, Hair Group):", defName);
+      const defName = selL
+        ? t("prompt.groupDefaultLayer", { id: selL.id }, "{id} Group")
+        : t("prompt.groupDefaultNum", { n: (P.nodes?.length || 0) + 1 }, "Group {n}");
+      const name = prompt(t("prompt.groupName", null, "New Transform Group name (e.g. Eye R, Head Rig, Hair Group):"), defName);
       if (!name) return;
       const opts = {};
       if (selL) {
@@ -389,13 +392,13 @@ async function handleAction(act) {
       const node = st.addGroupNode(name, opts);
       if (node) {
         st.setTool("transform");
-        showToast(`Created group "${node.name}" (${node.id}) — drag gizmo or attach child layers`);
+        showToast(t("toast.createdGroup", { name: node.name, id: node.id }, "Created group \"{name}\" ({id}) — drag gizmo or attach child layers"));
       }
     } else if (act === "del-layer" && P) {
       if (st.selectedNodeId && st.getSelectedNode()) {
         const n = st.getSelectedNode();
         st.deleteGroupNode(n.id);
-        showToast(`Deleted group ${n.name || n.id} (children promoted)`);
+        showToast(t("toast.deletedGroup", { name: n.name || n.id }, "Deleted group {name} (children promoted)"));
         return;
       }
       const L = st.getSelectedLayer();
@@ -407,7 +410,7 @@ async function handleAction(act) {
       st.deleteLayerDeltas(L.id);
       st.selectLayer(Math.max(0, idx - 1));
       st.emit("pack:mutated", { structural: true });
-      showToast(`Deleted layer ${L.id}`);
+      showToast(t("toast.deletedLayer", { id: L.id }, "Deleted layer {id}"));
     } else if (act === "reset-warp") {
       const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
       if (!tgt?.obj) return;
@@ -415,7 +418,7 @@ async function handleAction(act) {
       delete tgt.obj.F;
       if (tgt.kind === "yaw") delete tgt.obj.D;
       st.emit("pack:mutated");
-      showToast(`Mesh reset on ${st.getRigTargetLabel()}`);
+      showToast(t("toast.meshReset", { target: st.getRigTargetLabel() }, "Mesh reset on {target}"));
     } else if (act === "smooth-warp") {
       const tgt = st.getEditTargetForLayer(st.selectedLayerIdx, false);
       if (!tgt?.obj) return;
@@ -424,22 +427,22 @@ async function handleAction(act) {
       st.emit("pack:mutated");
     } else if (act === "add-yaw-key" && P) {
       const res = st.addYawKeyform(st.params.a);
-      showToast(res.ok ? `Added Angle X keyform at ${res.deg}°` : res.reason);
+      showToast(res.ok ? t("toast.addedYawKey", { deg: res.deg }, "Added Angle X keyform at {deg}°") : res.reason);
     } else if (act === "del-yaw-key" && P) {
       const res = st.deleteYawKeyform(st.activeSampleIdx);
-      showToast(res.ok ? "Deleted Angle X keyform" : res.reason);
+      showToast(res.ok ? t("toast.deletedYawKey", null, "Deleted Angle X keyform") : res.reason);
     } else if (act === "add-pitch-key" && P) {
       const res = st.addPitchKeyform(st.params.pitch);
-      showToast(res.ok ? `Added Angle Y keyform at ${res.deg}°` : res.reason);
+      showToast(res.ok ? t("toast.addedPitchKey", { deg: res.deg }, "Added Angle Y keyform at {deg}°") : res.reason);
     } else if (act === "del-pitch-key" && P) {
       const res = st.deletePitchKeyform(st.activePitchIdx);
-      showToast(res.ok ? "Deleted Angle Y keyform" : res.reason);
+      showToast(res.ok ? t("toast.deletedPitchKey", null, "Deleted Angle Y keyform") : res.reason);
     } else if (act === "new-blend-shape" && P) {
       const n = (P.blendShapes?.length || 0) + 1;
-      const name = prompt("New Blend Shape name (e.g. Cheek Puff, Brow Up, Smile Warp):", `Blend ${n}`);
+      const name = prompt(t("prompt.blendName", null, "New Blend Shape name (e.g. Cheek Puff, Brow Up, Smile Warp):"), t("prompt.blendDefault", { n }, "Blend {n}"));
       if (!name) return;
       const bs = st.addBlendShape(name);
-      if (bs) showToast(`Editing Blend Shape "${bs.name}" — sculpt with Brush, Lattice, Mesh, or Transform`);
+      if (bs) showToast(t("toast.editingBlend", { name: bs.name }, "Editing Blend Shape \"{name}\" — sculpt with Brush, Lattice, Mesh, or Transform"));
     } else if (act === "view-bust") {
       st.resetCamera("bust");
     } else if (act === "view-full") {
@@ -454,7 +457,7 @@ async function handleAction(act) {
       const L = st.getSelectedLayer();
       if (!L) return;
       st.soloId = st.soloId === L.id ? null : L.id;
-      showToast(st.soloId ? `Solo: ${L.id}` : "Solo off");
+      showToast(st.soloId ? t("toast.soloOn", { id: L.id }, "Solo: {id}") : t("toast.soloOff", null, "Solo off"));
     } else if (act === "show-all") {
       st.hiddenIds.clear(); st.soloId = null;
       leftPanels.renderLayerTree();
@@ -471,14 +474,14 @@ async function handleAction(act) {
       mirrorLayerKeyform(P, st.selectedLayerIdx, st.activeSampleIdx, dstIdx);
       st.snapToSample(dstIdx);
       st.emit("pack:mutated");
-      showToast(`Mirrored keyform ${st.activeSampleIdx} → ${dstIdx}`);
+      showToast(t("toast.mirroredKey", { from: st.activeSampleIdx, to: dstIdx }, "Mirrored keyform {from} → {to}"));
     } else if (act === "interp-key" && P) {
       const i = st.activeSampleIdx;
       if (st.selectedLayerIdx < 0 || i <= 0 || i >= P.samples.length - 1) return;
       st.pushUndo("Interpolate Keyform");
       interpolateLayerKeyform(P, st.selectedLayerIdx, i, i - 1, i + 1);
       st.emit("pack:mutated");
-      showToast(`Interpolated keyform ${i} from neighbors`);
+      showToast(t("toast.interpKey", { idx: i }, "Interpolated keyform {idx} from neighbors"));
     } else if (act === "copy-key-all" && P) {
       const SL = st.getActiveSampleLayer();
       if (!SL) return;
@@ -487,7 +490,7 @@ async function handleAction(act) {
         s.layers[st.selectedLayerIdx] = JSON.parse(JSON.stringify(SL));
       }
       st.emit("pack:mutated");
-      showToast("Copied active keyform transform to all yaw samples");
+      showToast(t("toast.copiedAllAngles", null, "Copied active keyform transform to all yaw samples"));
     } else if (act === "add-chain" && P) {
       st.pushUndo("Add Spring Chain");
       P.chains = P.chains || [];
@@ -509,13 +512,13 @@ async function handleAction(act) {
       st.selectedChainIdx = idx;
       st.view.showChains = true;
       st.emit("pack:mutated", { structural: true });
-      showToast(`Added spring chain chain_${idx + 1}`);
+      showToast(t("toast.addedChain", { name: `chain_${idx + 1}` }, "Added spring chain {name}"));
     } else if (act === "physics-impulse") {
       engine.physics.enabled = true;
       engine.impulseChains(950, -320);
-      showToast("Applied physics impulse");
+      showToast(t("toast.appliedImpulse", null, "Applied physics impulse"));
     } else if (act === "new-expr" && P) {
-      const name = prompt("New expression name:", "Custom");
+      const name = prompt(t("prompt.exprName", null, "New expression name:"), t("prompt.exprDefault", null, "Custom"));
       if (!name) return;
       st.pushUndo("New Expression");
       P.expr = P.expr || { pieces: {}, faces: {}, holds: {}, vowels: {} };
@@ -526,23 +529,28 @@ async function handleAction(act) {
       st.emit("params:changed");
     } else if (act === "validate-model" && P) {
       const errs = [];
-      if (!P.layers?.length) errs.push("No layers defined");
-      if (!P.samples?.length) errs.push("No yaw samples defined");
+      if (!P.layers?.length) errs.push(t("val.noLayers", null, "No layers defined"));
+      if (!P.samples?.length) errs.push(t("val.noSamples", null, "No yaw samples defined"));
       for (const s of P.samples || []) {
-        if (s.layers.length !== P.layers.length) errs.push(`Sample ${s.angle} layer count mismatch`);
+        if (s.layers.length !== P.layers.length) errs.push(t("val.sampleMismatch", { angle: s.angle }, "Sample {angle} layer count mismatch"));
       }
       if (hasSceneGraph(P)) {
         const allIds = new Set([...(P.nodes || []).map((n) => n.id), ...(P.layers || []).map((l) => l.id)]);
         const seenIds = new Set();
         for (const it of [...(P.nodes || []), ...(P.layers || [])]) {
-          if (seenIds.has(it.id)) errs.push(`Duplicate scene ID ${it.id}`);
+          if (seenIds.has(it.id)) errs.push(t("val.dupSceneId", { id: it.id }, "Duplicate scene ID {id}"));
           seenIds.add(it.id);
-          if (it.parent && !allIds.has(it.parent)) errs.push(`${it.id} has unknown parent ${it.parent}`);
-          if (it.parent && wouldCreateCycle(P, it.id, it.parent)) errs.push(`Cycle detected at ${it.id}`);
+          if (it.parent && !allIds.has(it.parent)) errs.push(t("val.unknownParent", { id: it.id, parent: it.parent }, "{id} has unknown parent {parent}"));
+          if (it.parent && wouldCreateCycle(P, it.id, it.parent)) errs.push(t("val.cycleDetected", { id: it.id }, "Cycle detected at {id}"));
         }
       }
       const nNodes = (P.nodes || []).length;
-      showToast(errs.length ? `Validation issues: ${errs.join("; ")}` : `layer2d/v1 valid: ${P.layers.length} layers, ${nNodes} groups, ${P.samples.length} samples, ${(P.chains || []).length} chains`, 4500);
+      showToast(
+        errs.length
+          ? t("toast.validationIssues", { issues: errs.join("; ") }, "Validation issues: {issues}")
+          : t("toast.validationOk", { layers: P.layers.length, groups: nNodes, samples: P.samples.length, chains: (P.chains || []).length }, "layer2d/v1 valid: {layers} layers, {groups} groups, {samples} samples, {chains} chains"),
+        4500,
+      );
     } else if (act === "export-png") {
       const bytes = await engine.capturePreviewPNG(1200, 1600);
       const url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
@@ -599,9 +607,9 @@ function syncChrome() {
   document.getElementById("vp-pivots").classList.toggle("active", state.view.showPivots);
   document.getElementById("vp-onion").classList.toggle("active", state.view.onionSkin);
   document.getElementById("vp-physics").classList.toggle("active", engine.physics.enabled);
-  document.getElementById("vp-yaw").textContent = `Yaw ${(state.params.a * 32.5).toFixed(1)}°`;
+  document.getElementById("vp-yaw").textContent = t("vp.yaw", { deg: (state.params.a * 32.5).toFixed(1) }, "Yaw {deg}°");
   const pitchEl = document.getElementById("vp-pitch");
-  if (pitchEl) pitchEl.textContent = `Pitch ${(state.params.pitch * 30.0).toFixed(1)}°`;
+  if (pitchEl) pitchEl.textContent = t("vp.pitch", { deg: (state.params.pitch * 30.0).toFixed(1) }, "Pitch {deg}°");
   const tgtEl = document.getElementById("vp-target");
   if (tgtEl) {
     tgtEl.textContent = state.getRigTargetLabel();
@@ -614,6 +622,15 @@ state.on("view:changed", syncChrome);
 state.on("params:changed", syncChrome);
 state.on("rigTarget:changed", syncChrome);
 state.on("doc:loaded", syncChrome);
+onLangChange(() => {
+  syncChrome();
+  leftPanels.renderLayerTree();
+  leftPanels.renderParams();
+  if (state.mode === "expressions" || state.mode === "animate") leftPanels.renderExprCards();
+  rightInspector.render();
+  timeline.renderTracks();
+  if (state.timeline.expanded) timeline.drawDope();
+});
 state.on("pack:mutated", (d) => {
   if (engine.P !== state.pack) engine.syncPack(state.pack);
   else if (d?.structural) engine.syncPack();
@@ -624,7 +641,7 @@ if (vpTargetBtn) {
   vpTargetBtn.addEventListener("click", () => {
     if (state.rigTarget.type !== "yaw") {
       state.snapToSample(state.activeSampleIdx);
-      showToast("Switched editing target back to Angle X");
+      showToast(t("toast.backToAngleX", null, "Switched editing target back to Angle X"));
     }
   });
 }
@@ -677,7 +694,7 @@ window.addEventListener("drop", async (e) => {
     if (/\.l2d$/i.test(f.name)) await openL2DBuffer(await f.arrayBuffer(), f.name);
     else if (/\.psd$/i.test(f.name)) await importPSDFile(f);
     else if (/\.(png|webp|jpe?g)$/i.test(f.name)) await addImageLayer(f);
-    else showToast("Drop a .l2d, .psd, .png, or .webp file");
+    else showToast(t("toast.dropUnsupported", null, "Drop a .l2d, .psd, .png, or .webp file"));
   } catch (err) {
     console.error(err);
     showToast(err.message || String(err), 5000);
@@ -713,8 +730,8 @@ window.addEventListener("keydown", (e) => {
   else if (k === "p") state.setTool("pivot");
   else if (k === "c") state.setTool("chain");
   else if (k === "h") state.setTool("pan");
-  else if (k === "[") { state.brush.radius = Math.max(16, state.brush.radius - 16); showToast(`Brush radius: ${state.brush.radius}px`, 900); }
-  else if (k === "]") { state.brush.radius = Math.min(400, state.brush.radius + 16); showToast(`Brush radius: ${state.brush.radius}px`, 900); }
+  else if (k === "[") { state.brush.radius = Math.max(16, state.brush.radius - 16); showToast(t("toast.brushRadius", { radius: state.brush.radius }, "Brush radius: {radius}px"), 900); }
+  else if (k === "]") { state.brush.radius = Math.min(400, state.brush.radius + 16); showToast(t("toast.brushRadius", { radius: state.brush.radius }, "Brush radius: {radius}px"), 900); }
   else if (k === "q") handleAction("prev-key");
   else if (k === "e") handleAction("next-key");
   else if (k === "0") handleAction("center-key");
@@ -737,7 +754,7 @@ window.addEventListener("keydown", (e) => {
           if (vi * 2 + 1 < t.obj.F.length) { t.obj.F[vi * 2] = 0; t.obj.F[vi * 2 + 1] = 0; }
         }
         state.emit("pack:mutated");
-        showToast(`Reset ${state.selectedVerts.size} mesh vertices`);
+        showToast(t("toast.resetVerts", { count: state.selectedVerts.size }, "Reset {count} mesh vertices"));
       }
     }
   } else if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -818,5 +835,5 @@ const qpModel = qp.get("model");
       return;
     } catch (_) {}
   }
-  showToast("Drop a .l2d or .psd file to begin", 4000);
+  showToast(t("toast.dropToBegin", null, "Drop a .l2d or .psd file to begin"), 4000);
 })();

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-i18n-ns="common,format">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,104 +14,108 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <script src="i18n/i18n.js"></script>
   <script src="app.js" defer></script>
 </head>
 <body class="doc">
   <header class="site-header">
     <div class="wrap">
       <a class="wordmark" href="./"><img class="brand-mark" src="assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
-      <nav class="nav" aria-label="Primary">
-        <a href="format.html" aria-current="page">Format</a>
-        <a href="studio/">Studio</a>
-        <a href="player/?model=test-signal.l2d">Player</a>
-        <a href="./#avatars">Avatars</a>
-        <a href="docs.html">Docs</a>
-        <a href="for-ai/">For AI</a>
-        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      <nav class="nav" aria-label="Primary" data-i18n-attr="aria-label:nav.ariaPrimary">
+        <a href="format.html" aria-current="page" data-i18n="nav.format">Format</a>
+        <a href="studio/" data-i18n="nav.studio">Studio</a>
+        <a href="player/?model=test-signal.l2d" data-i18n="nav.player">Player</a>
+        <a href="./#avatars" data-i18n="nav.avatars">Avatars</a>
+        <a href="docs.html" data-i18n="nav.docs">Docs</a>
+        <a href="for-ai/" data-i18n="nav.forAi">For AI</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener" data-i18n="nav.github">GitHub</a>
       </nav>
-      <a class="btn btn-primary" href="player/?model=test-signal.l2d">Launch Player</a>
+      <div class="header-actions">
+        <div class="lang-switcher" data-lang-switcher></div>
+        <a class="btn btn-primary" href="player/?model=test-signal.l2d" data-i18n="cta.launchPlayer">Launch Player</a>
+      </div>
     </div>
   </header>
 
   <main>
     <div class="wrap">
       <div class="doc-head">
-        <h1>The .l2d format</h1>
+        <h1 data-i18n="format.title">The .l2d format</h1>
       </div>
       <div class="doc-layout">
-        <nav class="toc" aria-label="On this page">
-          <a href="#bundle">Bundle</a>
-          <a href="#manifest">Manifest</a>
-          <a href="#pack">Runtime pack</a>
-          <a href="#physics">Depth &amp; physics</a>
-          <a href="#integrity">Integrity</a>
-          <a href="#license">License</a>
+        <nav class="toc" aria-label="On this page" data-i18n-attr="aria-label:nav.ariaToc">
+          <a href="#bundle" data-i18n="format.toc.bundle">Bundle</a>
+          <a href="#manifest" data-i18n="format.toc.manifest">Manifest</a>
+          <a href="#pack" data-i18n="format.toc.pack">Runtime pack</a>
+          <a href="#physics" data-i18n="format.toc.physics">Depth &amp; physics</a>
+          <a href="#integrity" data-i18n="format.toc.integrity">Integrity</a>
+          <a href="#license" data-i18n="format.toc.license">License</a>
         </nav>
         <div class="doc-body">
           <section id="bundle">
-            <h2>Bundle</h2>
-            <p>An <code>.l2d</code> file is a standard ZIP archive. Format identifier: <code>layer2d/v1</code>. JSON members are deflated; textures are stored uncompressed so the runtime can read them directly.</p>
-            <pre class="code"><code><span class="ln"><span class="tok-k">layer2d.json</span>       <span class="tok-p">open manifest</span></span><span class="ln"><span class="tok-k">pack.json</span>          <span class="tok-p">meshes, keyforms, physics, expressions</span></span><span class="ln"><span class="tok-k">tex/&lt;id&gt;.webp</span>      <span class="tok-p">layer textures, eye masks, expression pieces</span></span><span class="ln"><span class="tok-k">preview.png</span>        <span class="tok-p">optional portrait, 1200 × 1600 RGBA</span></span><span class="ln"><span class="tok-k">studio.json</span>        <span class="tok-p">optional non-destructive Studio metadata</span></span><span class="ln"><span class="tok-k">SHA256SUMS.json</span>    <span class="tok-p">digest for every other member</span></span></code></pre>
-            <p><strong>Required:</strong> <code>layer2d.json</code>, <code>pack.json</code>, <code>SHA256SUMS.json</code>, and every texture referenced by <code>pack.json</code>. Absolute paths, <code>..</code> segments and duplicate entries are rejected.</p>
+            <h2 data-i18n="format.bundle.heading">Bundle</h2>
+            <p data-i18n-html="format.bundle.introHtml">An <code>.l2d</code> file is a standard ZIP archive. Format identifier: <code>layer2d/v1</code>. JSON members are deflated; textures are stored uncompressed so the runtime can read them directly.</p>
+            <pre class="code"><code><span class="ln"><span class="tok-k">layer2d.json</span>       <span class="tok-p" data-i18n="format.bundle.c1">open manifest</span></span><span class="ln"><span class="tok-k">pack.json</span>          <span class="tok-p" data-i18n="format.bundle.c2">meshes, keyforms, physics, expressions</span></span><span class="ln"><span class="tok-k">tex/&lt;id&gt;.webp</span>      <span class="tok-p" data-i18n="format.bundle.c3">layer textures, eye masks, expression pieces</span></span><span class="ln"><span class="tok-k">preview.png</span>        <span class="tok-p" data-i18n="format.bundle.c4">optional portrait, 1200 × 1600 RGBA</span></span><span class="ln"><span class="tok-k">studio.json</span>        <span class="tok-p" data-i18n="format.bundle.c5">optional non-destructive Studio metadata</span></span><span class="ln"><span class="tok-k">SHA256SUMS.json</span>    <span class="tok-p" data-i18n="format.bundle.c6">digest for every other member</span></span></code></pre>
+            <p data-i18n-html="format.bundle.requiredHtml"><strong>Required:</strong> <code>layer2d.json</code>, <code>pack.json</code>, <code>SHA256SUMS.json</code>, and every texture referenced by <code>pack.json</code>. Absolute paths, <code>..</code> segments and duplicate entries are rejected.</p>
           </section>
 
           <section id="manifest">
-            <h2>Manifest</h2>
-            <p><code>layer2d.json</code> describes the avatar without parsing the runtime pack.</p>
+            <h2 data-i18n="format.manifest.heading">Manifest</h2>
+            <p data-i18n-html="format.manifest.introHtml"><code>layer2d.json</code> describes the avatar without parsing the runtime pack.</p>
             <pre class="code"><code><span class="ln"><span class="tok-p">{</span></span><span class="ln">  <span class="tok-k">"format"</span><span class="tok-p">:</span> <span class="tok-s">"layer2d/v1"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"id"</span><span class="tok-p">:</span> <span class="tok-s">"demo"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"name"</span><span class="tok-p">:</span> <span class="tok-s">"Layer2D Demo"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"version"</span><span class="tok-p">:</span> <span class="tok-s">"1.0.0"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"license"</span><span class="tok-p">:</span> <span class="tok-s">"MIT"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"entry"</span><span class="tok-p">:</span> <span class="tok-s">"pack.json"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"texExt"</span><span class="tok-p">:</span> <span class="tok-s">"webp"</span><span class="tok-p">,</span></span><span class="ln">  <span class="tok-k">"canvas"</span><span class="tok-p">: [</span><span class="tok-n">1200</span><span class="tok-p">,</span> <span class="tok-n">2000</span><span class="tok-p">],</span></span><span class="ln">  <span class="tok-k">"stats"</span><span class="tok-p">: {</span> <span class="tok-k">"layers"</span><span class="tok-p">:</span> <span class="tok-n">19</span><span class="tok-p">,</span> <span class="tok-k">"expressions"</span><span class="tok-p">:</span> <span class="tok-n">5</span><span class="tok-p">,</span> <span class="tok-k">"chains"</span><span class="tok-p">:</span> <span class="tok-n">2</span> <span class="tok-p">},</span></span><span class="ln">  <span class="tok-k">"capabilities"</span><span class="tok-p">: {</span> <span class="tok-k">"obsAlpha"</span><span class="tok-p">:</span> <span class="tok-n">true</span><span class="tok-p">,</span> <span class="tok-k">"springChains"</span><span class="tok-p">:</span> <span class="tok-n">true</span> <span class="tok-p">},</span></span><span class="ln">  <span class="tok-k">"preview"</span><span class="tok-p">:</span> <span class="tok-s">"preview.png"</span></span><span class="ln"><span class="tok-p">}</span></span></code></pre>
             <div class="table-scroll">
               <table>
-                <thead><tr><th>Field</th><th>Type</th><th>Meaning</th></tr></thead>
+                <thead><tr><th data-i18n="format.manifest.thField">Field</th><th data-i18n="format.manifest.thType">Type</th><th data-i18n="format.manifest.thMeaning">Meaning</th></tr></thead>
                 <tbody>
-                  <tr><td><code>format</code></td><td>string</td><td>Always <code>layer2d/v1</code>. Readers reject other values.</td></tr>
-                  <tr><td><code>id</code></td><td>string</td><td>Lowercase slug, unique per avatar.</td></tr>
-                  <tr><td><code>name</code></td><td>string</td><td>Display name.</td></tr>
-                  <tr><td><code>version</code></td><td>string</td><td>Avatar release version (semver).</td></tr>
-                  <tr><td><code>license</code></td><td>string</td><td>License identifier or summary for the artwork and rig.</td></tr>
-                  <tr><td><code>entry</code></td><td>string</td><td>Runtime pack path, normally <code>pack.json</code>.</td></tr>
-                  <tr><td><code>texExt</code></td><td>string</td><td>Primary layer texture extension: <code>webp</code> or <code>png</code>.</td></tr>
-                  <tr><td><code>canvas</code></td><td>[w, h]</td><td>Source canvas size in pixels. All mesh coordinates use this space.</td></tr>
-                  <tr><td><code>stats</code></td><td>object</td><td><code>layers</code>, <code>chains</code>, <code>samples</code>, <code>expressions</code>, <code>holds</code>, <code>outfits</code>, <code>exprPieces</code>, <code>vowels</code>. Must match <code>pack.json</code>.</td></tr>
-                  <tr><td><code>capabilities</code></td><td>object</td><td><code>headYawSamples</code>, <code>headPitch2D</code>, <code>springChains</code>, <code>tailRig</code>, <code>obsAlpha</code>, <code>micLipSync</code>, <code>webcamTracking</code>.</td></tr>
-                  <tr><td><code>preview</code></td><td>string</td><td>Optional portrait path.</td></tr>
+                  <tr><td><code>format</code></td><td data-i18n="format.type.string">string</td><td data-i18n-html="format.manifest.rowFormatHtml">Always <code>layer2d/v1</code>. Readers reject other values.</td></tr>
+                  <tr><td><code>id</code></td><td data-i18n="format.type.string">string</td><td data-i18n="format.manifest.rowId">Lowercase slug, unique per avatar.</td></tr>
+                  <tr><td><code>name</code></td><td data-i18n="format.type.string">string</td><td data-i18n="format.manifest.rowName">Display name.</td></tr>
+                  <tr><td><code>version</code></td><td data-i18n="format.type.string">string</td><td data-i18n="format.manifest.rowVersion">Avatar release version (semver).</td></tr>
+                  <tr><td><code>license</code></td><td data-i18n="format.type.string">string</td><td data-i18n="format.manifest.rowLicense">License identifier or summary for the artwork and rig.</td></tr>
+                  <tr><td><code>entry</code></td><td data-i18n="format.type.string">string</td><td data-i18n-html="format.manifest.rowEntryHtml">Runtime pack path, normally <code>pack.json</code>.</td></tr>
+                  <tr><td><code>texExt</code></td><td data-i18n="format.type.string">string</td><td data-i18n-html="format.manifest.rowTexExtHtml">Primary layer texture extension: <code>webp</code> or <code>png</code>.</td></tr>
+                  <tr><td><code>canvas</code></td><td>[w, h]</td><td data-i18n="format.manifest.rowCanvas">Source canvas size in pixels. All mesh coordinates use this space.</td></tr>
+                  <tr><td><code>stats</code></td><td data-i18n="format.type.object">object</td><td data-i18n-html="format.manifest.rowStatsHtml"><code>layers</code>, <code>chains</code>, <code>samples</code>, <code>expressions</code>, <code>holds</code>, <code>outfits</code>, <code>exprPieces</code>, <code>vowels</code>. Must match <code>pack.json</code>.</td></tr>
+                  <tr><td><code>capabilities</code></td><td data-i18n="format.type.object">object</td><td data-i18n-html="format.manifest.rowCapabilitiesHtml"><code>headYawSamples</code>, <code>headPitch2D</code>, <code>springChains</code>, <code>tailRig</code>, <code>obsAlpha</code>, <code>micLipSync</code>, <code>webcamTracking</code>.</td></tr>
+                  <tr><td><code>preview</code></td><td data-i18n="format.type.string">string</td><td data-i18n="format.manifest.rowPreview">Optional portrait path.</td></tr>
                 </tbody>
               </table>
             </div>
           </section>
 
           <section id="pack">
-            <h2>Runtime pack</h2>
-            <p><code>pack.json</code> holds everything the player draws and animates. Each entry in <code>layers</code> references <code>tex/&lt;id&gt;.&lt;texExt&gt;</code>; optional per-layer variants add companion textures.</p>
+            <h2 data-i18n="format.pack.heading">Runtime pack</h2>
+            <p data-i18n-html="format.pack.introHtml"><code>pack.json</code> holds everything the player draws and animates. Each entry in <code>layers</code> references <code>tex/&lt;id&gt;.&lt;texExt&gt;</code>; optional per-layer variants add companion textures.</p>
             <div class="table-scroll">
               <table>
-                <thead><tr><th>Key</th><th>Contents</th></tr></thead>
+                <thead><tr><th data-i18n="format.pack.thKey">Key</th><th data-i18n="format.pack.thContents">Contents</th></tr></thead>
                 <tbody>
-                  <tr><td><code>layers</code></td><td>Ordered draw list: mesh, depth, warp grid, toggles. Variants: <code>_sheer</code>, <code>_hole</code>, <code>_up</code>, <code>_palm</code>, <code>_posed</code>, <code>_wipe</code>, <code>_open</code>.</td></tr>
-                  <tr><td><code>samples</code></td><td>Head-yaw keyforms by angle.</td></tr>
-                  <tr><td><code>chains</code></td><td>Spring chains for hair locks, ears, tail, ribbons and tassels.</td></tr>
-                  <tr><td><code>expr</code></td><td><code>faces</code>, <code>pieces</code>, <code>holds</code>, <code>vowels</code> and blink data.</td></tr>
-                  <tr><td><code>outfits</code></td><td>Named layer toggle sets.</td></tr>
-                  <tr><td><code>hairStyles</code></td><td>Alternate hair layer sets.</td></tr>
+                  <tr><td><code>layers</code></td><td data-i18n-html="format.pack.rowLayersHtml">Ordered draw list: mesh, depth, warp grid, toggles. Variants: <code>_sheer</code>, <code>_hole</code>, <code>_up</code>, <code>_palm</code>, <code>_posed</code>, <code>_wipe</code>, <code>_open</code>.</td></tr>
+                  <tr><td><code>samples</code></td><td data-i18n="format.pack.rowSamples">Head-yaw keyforms by angle.</td></tr>
+                  <tr><td><code>chains</code></td><td data-i18n="format.pack.rowChains">Spring chains for hair locks, ears, tail, ribbons and tassels.</td></tr>
+                  <tr><td><code>expr</code></td><td data-i18n-html="format.pack.rowExprHtml"><code>faces</code>, <code>pieces</code>, <code>holds</code>, <code>vowels</code> and blink data.</td></tr>
+                  <tr><td><code>outfits</code></td><td data-i18n="format.pack.rowOutfits">Named layer toggle sets.</td></tr>
+                  <tr><td><code>hairStyles</code></td><td data-i18n="format.pack.rowHairStyles">Alternate hair layer sets.</td></tr>
                 </tbody>
               </table>
             </div>
           </section>
 
           <section id="physics">
-            <h2>Depth &amp; physics</h2>
-            <p>Hair is split into stacked strata — back, back sides, scalp cap, bangs, sides — each with a signed depth. Back hair carries negative depth, so head turns produce true parallax instead of crossfades. Hair opacity never fades during a turn.</p>
-            <p>Spring chains are multi-joint and solved per frame in the runtime, independent of frame rate.</p>
+            <h2 data-i18n="format.physics.heading">Depth &amp; physics</h2>
+            <p data-i18n="format.physics.p1">Hair is split into stacked strata — back, back sides, scalp cap, bangs, sides — each with a signed depth. Back hair carries negative depth, so head turns produce true parallax instead of crossfades. Hair opacity never fades during a turn.</p>
+            <p data-i18n="format.physics.p2">Spring chains are multi-joint and solved per frame in the runtime, independent of frame rate.</p>
           </section>
 
           <section id="integrity">
-            <h2>Integrity</h2>
-            <p><code>SHA256SUMS.json</code> maps every member except itself to its SHA-256 hex digest. A valid bundle has an exact key match, matching digests, all referenced textures present, and manifest <code>stats</code> equal to the pack.</p>
+            <h2 data-i18n="format.integrity.heading">Integrity</h2>
+            <p data-i18n-html="format.integrity.p1Html"><code>SHA256SUMS.json</code> maps every member except itself to its SHA-256 hex digest. A valid bundle has an exact key match, matching digests, all referenced textures present, and manifest <code>stats</code> equal to the pack.</p>
             <pre class="code"><code><span class="ln"><span class="tok-p">$</span> python -m rigkit.format validate demo.l2d</span></code></pre>
           </section>
 
           <section id="license">
-            <h2>License</h2>
-            <p>The <code>layer2d/v1</code> specification is open and royalty-free. Anyone may read, write and ship <code>.l2d</code> files without fees. Each avatar declares its own artwork license in the manifest.</p>
+            <h2 data-i18n="format.license.heading">License</h2>
+            <p data-i18n-html="format.license.p1Html">The <code>layer2d/v1</code> specification is open and royalty-free. Anyone may read, write and ship <code>.l2d</code> files without fees. Each avatar declares its own artwork license in the manifest.</p>
           </section>
         </div>
       </div>
@@ -121,14 +125,14 @@
   <footer class="site-footer">
     <div class="wrap">
       <a class="wordmark" href="./"><img class="brand-mark" src="assets/brand/logo-mark.svg" alt="" width="28" height="28"><span>Layer<em class="brand-2d">2D</em></span></a>
-      <nav class="footer-nav" aria-label="Footer">
-        <a href="format.html">Format</a>
-        <a href="studio/">Studio</a>
-        <a href="player/?model=test-signal.l2d">Player</a>
-        <a href="./#avatars">Avatars</a>
-        <a href="docs.html">Docs</a>
-        <a href="for-ai/">For AI</a>
-        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener">GitHub</a>
+      <nav class="footer-nav" aria-label="Footer" data-i18n-attr="aria-label:nav.ariaFooter">
+        <a href="format.html" data-i18n="nav.format">Format</a>
+        <a href="studio/" data-i18n="nav.studio">Studio</a>
+        <a href="player/?model=test-signal.l2d" data-i18n="nav.player">Player</a>
+        <a href="./#avatars" data-i18n="nav.avatars">Avatars</a>
+        <a href="docs.html" data-i18n="nav.docs">Docs</a>
+        <a href="for-ai/" data-i18n="nav.forAi">For AI</a>
+        <a href="https://github.com/JagTheHero/layer2d" target="_blank" rel="noopener" data-i18n="nav.github">GitHub</a>
       </nav>
     </div>
   </footer>

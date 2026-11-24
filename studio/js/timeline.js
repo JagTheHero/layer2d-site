@@ -8,15 +8,19 @@
  *   - Dynamic tracks for all Blend Shapes in `pack.blendShapes`
  */
 
-const CORE_TRACK_DEFS = [
-  { key: "a", label: "Angle X", fmt: (v) => `${(v * 32.5).toFixed(1)}°`, numeric: true },
-  { key: "pitch", label: "Angle Y", fmt: (v) => `${(v * 30.0).toFixed(1)}°`, numeric: true },
-  { key: "roll", label: "Angle Z", fmt: (v) => `${((v * 180) / Math.PI).toFixed(1)}°`, numeric: true },
-  { key: "eyes", label: "Eye Open", fmt: (v) => Number(v).toFixed(2), numeric: true },
-  { key: "vowel", label: "Mouth Vowel", fmt: (v) => v || "—", numeric: false },
-  { key: "face", label: "Expression", fmt: (v) => v || "Neutral", numeric: false },
-  { key: "tailSway", label: "Tail Wag", fmt: (v) => Number(v).toFixed(2), numeric: true },
-];
+import { t } from "./i18n_bridge.js";
+
+function getCoreTrackDefs() {
+  return [
+    { key: "a", label: t("tl.trackAngleX", null, "Angle X"), fmt: (v) => `${(v * 32.5).toFixed(1)}°`, numeric: true },
+    { key: "pitch", label: t("tl.trackAngleY", null, "Angle Y"), fmt: (v) => `${(v * 30.0).toFixed(1)}°`, numeric: true },
+    { key: "roll", label: t("tl.trackAngleZ", null, "Angle Z"), fmt: (v) => `${((v * 180) / Math.PI).toFixed(1)}°`, numeric: true },
+    { key: "eyes", label: t("tl.trackEyeOpen", null, "Eye Open"), fmt: (v) => Number(v).toFixed(2), numeric: true },
+    { key: "vowel", label: t("tl.trackMouthVowel", null, "Mouth Vowel"), fmt: (v) => v || "—", numeric: false },
+    { key: "face", label: t("tl.trackExpression", null, "Expression"), fmt: (v) => (v && v !== "Neutral" ? v : t("tl.neutral", null, "Neutral")), numeric: false },
+    { key: "tailSway", label: t("tl.trackTailWag", null, "Tail Wag"), fmt: (v) => Number(v).toFixed(2), numeric: true },
+  ];
+}
 
 function easeVal(u, ease = "easeInOut", bz = null) {
   u = Math.max(0, Math.min(1, u));
@@ -57,14 +61,15 @@ export class TimelineController {
   }
 
   getTrackDefs() {
+    const core = getCoreTrackDefs();
     const BS = (this.state.pack && this.state.pack.blendShapes) || [];
-    if (!BS.length) return CORE_TRACK_DEFS;
+    if (!BS.length) return core;
     return [
-      ...CORE_TRACK_DEFS,
+      ...core,
       ...BS.map((bs) => ({
         key: `blend:${bs.id}`,
         blendId: bs.id,
-        label: `BS: ${bs.name}`,
+        label: t("tl.bsPrefix", { name: bs.name }, "BS: {name}"),
         fmt: (v) => Number(v || 0).toFixed(2),
         numeric: true,
       })),
@@ -166,7 +171,7 @@ export class TimelineController {
       this.delBtn.addEventListener("click", () => this.deleteSelectedKeyframe());
     }
     document.getElementById("tl-new-clip").addEventListener("click", () => {
-      const name = prompt("New animation clip name:", `Clip ${(st.studio?.clips?.length || 0) + 1}`);
+      const name = prompt(t("tl.promptNewClip", null, "New animation clip name:"), t("tl.defaultClipName", { n: (st.studio?.clips?.length || 0) + 1 }, "Clip {n}"));
       if (!name) return;
       st.pushUndo("Add Animation Clip");
       st.studio.clips.push({
@@ -298,14 +303,14 @@ export class TimelineController {
       arr[exIdx].ease = ease;
       st.timeline.selectedTrack = trKey;
       st.timeline.selectedKeyIdx = exIdx;
-      this.onToast(`Updated keyframe on ${td.label} at ${arr[exIdx].t.toFixed(2)}s`);
+      this.onToast(t("tl.toastUpdated", { label: td.label, time: arr[exIdx].t.toFixed(2) }, "Updated keyframe on {label} at {time}s"));
     } else {
       const obj = { t, v: val, ease };
       arr.push(obj);
       arr.sort((a, b) => a.t - b.t);
       st.timeline.selectedTrack = trKey;
       st.timeline.selectedKeyIdx = arr.indexOf(obj);
-      this.onToast(`Inserted keyframe on ${td.label} at ${t.toFixed(2)}s`);
+      this.onToast(t("tl.toastInserted", { label: td.label, time: t.toFixed(2) }, "Inserted keyframe on {label} at {time}s"));
     }
     this.renderTracks();
     this.drawDope();
@@ -331,7 +336,7 @@ export class TimelineController {
     this.drawDope();
     this._syncDeleteButton();
     const td = this.getTrackDefs().find((d) => d.key === trKey);
-    this.onToast(`Deleted keyframe on ${td ? td.label : trKey} at ${removed.t.toFixed(2)}s`);
+    this.onToast(t("tl.toastDeleted", { label: td ? td.label : trKey, time: removed.t.toFixed(2) }, "Deleted keyframe on {label} at {time}s"));
     return true;
   }
 
@@ -395,7 +400,7 @@ export class TimelineController {
     const st = this.state;
     const el = this.tracksCol;
     const defs = this.getTrackDefs();
-    el.innerHTML = `<div class="tl-track-head-spacer"><span>Track</span><span style="text-align:right">Value</span></div>`;
+    el.innerHTML = `<div class="tl-track-head-spacer"><span>${t("tl.track", null, "Track")}</span><span style="text-align:right">${t("tl.value", null, "Value")}</span></div>`;
     this._trackValEls = Object.create(null);
     for (const td of defs) {
       const row = document.createElement("div");
@@ -658,7 +663,7 @@ export class TimelineController {
     const st = this.state;
     const clip = st.getActiveClip();
     if (!clip || typeof MediaRecorder === "undefined") {
-      this.onToast("MediaRecorder is not supported in this browser.");
+      this.onToast(t("tl.toastNoRecorder", null, "MediaRecorder is not supported in this browser."));
       return;
     }
     const stream = this.engine.canvas.captureStream(st.timeline.fps || 30);
@@ -674,7 +679,7 @@ export class TimelineController {
       a.download = `${clip.id || "layer2d_clip"}.webm`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      this.onToast(`Exported ${clip.name} (${(blob.size / 1e6).toFixed(2)} MB WebM)`);
+      this.onToast(t("tl.toastExported", { name: clip.name, mb: (blob.size / 1e6).toFixed(2) }, "Exported {name} ({mb} MB WebM)"));
     };
 
     const prevLoop = st.timeline.loop;
@@ -683,7 +688,7 @@ export class TimelineController {
     st.timeline.playing = true;
     this.syncPlayButtons();
     rec.start();
-    this.onToast(`Recording ${clip.duration.toFixed(1)}s WebM clip…`);
+    this.onToast(t("tl.toastRecording", { dur: clip.duration.toFixed(1) }, "Recording {dur}s WebM clip…"));
 
     setTimeout(() => {
       if (rec.state === "recording") rec.stop();

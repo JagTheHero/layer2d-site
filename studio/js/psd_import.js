@@ -8,6 +8,7 @@
  */
 
 import { canvasToBytes } from "./l2d_io.js";
+import { t } from "./i18n_bridge.js";
 
 const DEC_LATIN = new TextDecoder("latin1");
 const DEC_UTF16BE = new TextDecoder("utf-16be");
@@ -57,7 +58,7 @@ function decodeChannel(bytes, dv, off, dataLen, w, h, depth) {
       dataOff += lineLen;
     }
   } else {
-    throw new Error(`Unsupported PSD channel compression mode ${comp} (only Raw/RLE supported)`);
+    throw new Error(t("err.psdComp", { comp }, "Unsupported PSD channel compression mode {comp} (only Raw/RLE supported)"));
   }
 
   if (depth === 8) return raw;
@@ -71,17 +72,17 @@ export function parsePSD(buf) {
   const bytes = new Uint8Array(buf);
   const dv = new DataView(buf);
   if (bytes.length < 26 || readStr(bytes, 0, 4) !== "8BPS") {
-    throw new Error("Not a valid Photoshop .psd file (missing 8BPS header)");
+    throw new Error(t("err.psdHeader", null, "Not a valid Photoshop .psd file (missing 8BPS header)"));
   }
   const version = dv.getUint16(4, false);
-  if (version !== 1) throw new Error(`Unsupported PSD version ${version} (PSB v2 not supported in browser)`);
+  if (version !== 1) throw new Error(t("err.psdVersion", { version }, "Unsupported PSD version {version} (PSB v2 not supported in browser)"));
   const numChannels = dv.getUint16(12, false);
   const height = dv.getUint32(14, false);
   const width = dv.getUint32(18, false);
   const depth = dv.getUint16(22, false);
   const colorMode = dv.getUint16(24, false);
-  if (depth !== 8 && depth !== 16) throw new Error(`Unsupported PSD bit depth ${depth}`);
-  if (colorMode !== 3 && colorMode !== 1) throw new Error(`Unsupported PSD color mode ${colorMode} (RGB or Grayscale required)`);
+  if (depth !== 8 && depth !== 16) throw new Error(t("err.psdDepth", { depth }, "Unsupported PSD bit depth {depth}"));
+  if (colorMode !== 3 && colorMode !== 1) throw new Error(t("err.psdColorMode", { colorMode }, "Unsupported PSD color mode {colorMode} (RGB or Grayscale required)"));
 
   let p = 26;
   // Color Mode Data
@@ -94,7 +95,7 @@ export function parsePSD(buf) {
   const layerMaskLen = dv.getUint32(p, false);
   p += 4;
   if (layerMaskLen === 0) {
-    throw new Error("PSD contains no layers (flattened PSD — please export with layers intact)");
+    throw new Error(t("err.psdFlattened", null, "PSD contains no layers (flattened PSD — please export with layers intact)"));
   }
   const layerInfoLen = dv.getUint32(p, false);
   p += 4;
@@ -116,7 +117,7 @@ export function parsePSD(buf) {
       channels.push({ id, len });
     }
     const sig = readStr(bytes, p, 4); p += 4;
-    if (sig !== "8BIM") throw new Error(`Invalid PSD layer signature at layer ${i}`);
+    if (sig !== "8BIM") throw new Error(t("err.psdLayerSig", { index: i }, "Invalid PSD layer signature at layer {index}"));
     const blendMode = readStr(bytes, p, 4); p += 4;
     const opacity = bytes[p++];
     const clipping = bytes[p++] === 1;

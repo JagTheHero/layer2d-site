@@ -1,0 +1,19 @@
+{
+  "meta.title": "Layer2D — 开源 2D 虚拟形象引擎",
+  "meta.description": "免费开源的 .l2d 格式规范与 WebGL2 OBS 播放器。零授权费用，自由构建、绑定并开播。",
+  "hero.titleHtml": "开源 2D<br>虚拟形象引擎。",
+  "hero.subtitle": "免费开源的 .l2d 格式规范、浏览器端 Studio 与 WebGL2 OBS 播放器。零授权费用，自由构建、绑定并开播。",
+  "hero.openStudio": "打开 Studio",
+  "avatars.heading": "虚拟形象",
+  "avatars.liveBadge": "实时 WebGL2",
+  "avatars.livePreviewTitle": "{name} 实时 WebGL2 预览",
+  "avatars.interactivePreviewTitle": "{name} 交互式 WebGL2 预览",
+  "spec.heading": "开放规范",
+  "spec.feature1Html": "便携的 <br>.l2d 格式",
+  "spec.feature2Html": "WebGL2 <br>OBS 运行时",
+  "spec.feature3Html": "多深度层次 <br>3D 发丝与物理模拟",
+  "lightbox.openPlayer": "在 Player 中打开",
+  "lightbox.tryDemoPlayer": "试用示例 Player",
+  "lightbox.openStudio": "在 Studio 中打开",
+  "lightbox.tryDemoStudio": "试用示例 Studio"
+}

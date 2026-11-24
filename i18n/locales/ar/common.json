@@ -1,0 +1,17 @@
+{
+  "lang.switch": "اللغة",
+  "nav.ariaPrimary": "التنقل الرئيسي",
+  "nav.ariaFooter": "تذييل الصفحة",
+  "nav.ariaToc": "في هذه الصفحة",
+  "nav.format": "الصيغة",
+  "nav.studio": "الاستوديو",
+  "nav.player": "المشغّل",
+  "nav.avatars": "الأفاتار",
+  "nav.docs": "التوثيق",
+  "nav.forAi": "للذكاء الاصطناعي",
+  "nav.github": "GitHub",
+  "cta.launchPlayer": "تشغيل المشغّل",
+  "common.close": "إغلاق",
+  "common.copy": "نسخ",
+  "common.copied": "تم النسخ!"
+}
