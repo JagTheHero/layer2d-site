@@ -13,7 +13,7 @@ export const FS = `#version 300 es
 precision highp float;
 in vec2 vC; out vec4 oCol;
 uniform sampler2D uTex, uHole, uClip, uWipeTex, uOpenTex, uBehindA, uBehindB; uniform highp sampler2D uSkirt;
-uniform float uBehind;                                 // an earring on the far side: cut where her face and neck cover it
+uniform float uBehind, uClipMix;                         // an earring on the far side: cut where her face and neck cover it; clip/reverse-mask blend
 uniform vec2 uBehindShift;                             // (her left lock: where they cover it this far out, screen px)
 uniform int uRigid; uniform vec2 uRigidD;              // an earring turns as its hook does, unbent (its foot hung below the chin)
 uniform int uKind, uHair, uHasD, uGD, uHook, uVis, uHead, uJaw, uNoFade, uHasHole, uHasWipe, uClipOn, uAlphaOnly, uSkirtN;
@@ -802,7 +802,8 @@ void main() {
   if (uHasHole == 1) c *= 1.0 - uHoleS * texture(uHole, tc).r;
   if (uCuff.y > 0.0) c *= 1.0 - uCuff.y * (1.0 - smoothstep(uCuff.x - 12.0, uCuff.x + 12.0, sArm));
   if (uHasWipe == 1) c *= clamp((uWipe * (1.0 + uWipeSoft) - texture(uWipeTex, tc).r) / uWipeSoft, 0.0, 1.0);   // fit.WIPE
-  if (uClipOn == 1) c *= texelFetch(uClip, ivec2(gl_FragCoord.xy), 0).a;
+  if (uClipOn == 1) c *= mix(1.0, texelFetch(uClip, ivec2(gl_FragCoord.xy), 0).a, uClipMix);
+  else if (uClipOn == 2) c *= mix(1.0, 1.0 - texelFetch(uClip, ivec2(gl_FragCoord.xy), 0).a, uClipMix);
   if (uBehind > 0.0) { ivec2 q = clamp(ivec2(gl_FragCoord.xy + uBehindShift), ivec2(0), textureSize(uBehindA, 0) - 1);
     c *= 1.0 - uBehind * max(texelFetch(uBehindA, q, 0).a, texelFetch(uBehindB, q, 0).a); }
   oCol = uAlphaOnly == 1 ? vec4(c.a) : c;

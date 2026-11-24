@@ -333,12 +333,15 @@ export class Layer2DEngine {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
-    // Rebuild clipFbo + topological order (every layer referenced by clip or behind needs an FBO!)
+    // Rebuild clipFbo + topological order (every layer referenced by clip, behind, or outfit clipMask needs an FBO!)
     const neededClip = new Set();
     for (const L of P.layers) {
       if (L.clipTarget) neededClip.add(L.id);
       if (L.clip) neededClip.add(L.clip);
       if (Array.isArray(L.behind)) { for (const b of L.behind) if (b) neededClip.add(b); }
+    }
+    for (const o of Object.values(P.outfits || {})) {
+      if (o && o.clipMask && o.clipMask.target) neededClip.add(o.clipMask.target);
     }
     for (const id of Object.keys(this.clipFbo)) {
       if (!neededClip.has(id)) {
@@ -1372,11 +1375,17 @@ export class Layer2DEngine {
       }
     }
 
-    // Outfit wear visibility
+    // Outfit wear visibility (+ conditional clip / reverse-mask bindings)
     const sleeveOp = Object.create(null);
+    const outfitClip = Object.create(null);
+    const outfitClipActive = new Set();
     const wear = params.wear || {};
     for (const [g, o] of Object.entries(P.outfits || {})) {
       const w = g in wear ? wear[g] : (o.default === false ? 0 : 1);
+      if (o.clipMask && w > 0.001 && this.clipFbo[o.clipMask.target]) {
+        outfitClipActive.add(o.clipMask.target);
+        for (const lid of o.clipMask.layers || []) outfitClip[lid] = { target: o.clipMask.target, invert: !!o.clipMask.invert, mix: w };
+      }
       if (w >= 1) continue;
       for (const id of o.hide || []) sleeveOp[id] = (sleeveOp[id] ?? 1) * w;
     }
@@ -1394,7 +1403,7 @@ export class Layer2DEngine {
       if (!L || !k) return false;
       const tid = piece ? "expr_" + piece.id : L.id;
       if (!this.tex[tid]) return false;
-      const effOp = (piece ? (piece.op ?? 1) : k.op * (sleeveOp[L.id] ?? 1)) * (alphaOnly ? 1 : passOp);
+      const effOp = (piece ? (piece.op ?? 1) : k.op * (alphaOnly && outfitClipActive.has(L.id) ? 1 : (sleeveOp[L.id] ?? 1))) * (alphaOnly ? 1 : passOp);
       if (effOp <= 0.0005 || (k.wipe ?? 1) <= 0.0005) return false;
 
       const ey = L.eye && !(piece && L.eye.mode % 3 === 2) ? eyes[L.eye.side] : null;
@@ -1607,13 +1616,22 @@ export class Layer2DEngine {
       } else {
         gl.uniform1i(U.uHasWipe, 0);
       }
+      const oc = !alphaOnly ? outfitClip[L.id] : null;
       if (L.clip && this.clipFbo[L.clip] && (!alphaOnly || L.clip !== L.id)) {
-        gl.uniform1i(U.uClipOn, 1);
+        gl.uniform1i(U.uClipOn, L.clipInvert ? 2 : 1);
+        gl.uniform1f(U.uClipMix, 1.0);
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, this.clipFbo[L.clip].tex);
         gl.uniform1i(U.uClip, 2);
+      } else if (oc && this.clipFbo[oc.target] && oc.target !== L.id) {
+        gl.uniform1i(U.uClipOn, oc.invert ? 2 : 1);
+        gl.uniform1f(U.uClipMix, oc.mix);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this.clipFbo[oc.target].tex);
+        gl.uniform1i(U.uClip, 2);
       } else {
         gl.uniform1i(U.uClipOn, 0);
+        gl.uniform1f(U.uClipMix, 0.0);
       }
       if (L.behind && !alphaOnly && !piece && (k.behind || 0) >= 0.5 && this.clipFbo[L.behind[0]] && this.clipFbo[L.behind[1]]) {
         gl.uniform1f(U.uBehind, 1.0);
@@ -1648,7 +1666,8 @@ export class Layer2DEngine {
       gl.viewport(0, 0, W, H);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
-      if (isVisible(id)) {
+      const clipVis = isVisible(id) || (outfitClipActive.has(id) && !(soloId && id !== soloId) && !(hiddenIds && hiddenIds.has(id)) && !fc.hide.has(id));
+      if (clipVis) {
         const idx = P.lidx[id];
         if (idx !== undefined) drawLayer(idx, true, fc.move[id], null);
       }

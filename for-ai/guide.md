@@ -85,6 +85,7 @@ Any cylindrical garment or accessory that a limb or neck passes through — **so
 - **Elbow seams (ON & OFF):** Anchor-solve `B03 -> B04` opaque endpoints `< 2px` with matched widths, strip cut-edge ink across the overlap, and map both bare arms and sleeves in `body.elbowHalf`.
 - **Wrist seams & sleeve cuffs:** Unify hand wrist centerlines (`G01R/L`) across bare forearms and sleeved cuffs, partial-mask cuffs (`J05_back` behind wrist + `J05` front lip in front), and verify both outfit states up close.
 - **Camisole straps & chokers:** Size choker `A03` to `1.00–1.10×` neck width centered on `B01`. Check the concept art: camisole/tank straps usually drape naturally over the **inner shoulders/trapezius** (well below the choker) rather than shooting up to the choker!
+- **Toggleable hoods & conditional clipping (`outfits.<g>.clipMask` / `clipInvert`):** When an outfit toggle (such as a hood) needs to contain spiky hair or cut out overlapping layers only while worn, add `clipMask: {"target": "HD_BACK", "layers": [...], "invert": false}` to that outfit entry (and keep the clip target inset inside the hood's outer rim with matching yaw warp and `pitchGroup`). Use `clipInvert: true` on static layers for permanent reverse masking.
 
 ---
 

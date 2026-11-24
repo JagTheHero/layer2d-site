@@ -98,7 +98,7 @@ Each `samples[k].layers[i]` specifies:
 - `pitchGroups`: map `layerId -> "face" | "bangs" | "side" | "crown" | "back" | "ear" | "humanEar"`.
 - `chains[]`: 2–6 joint spring chains `{name, parent, k: [root, tip], damp, joints: [x0,y0,...], depth, pin}` bound via `layer.chains = [chainIdx]` and `layer.chainSigma`.
 - `tail`: optional rigid pelvis-locked tail `{id, pivot: [x, y], amp, freq, happyFaces}`.
-- `outfits`: named toggles `{label, default, hide: [ids], off: [dx, dy], secs}`.
+- `outfits`: named toggles `{label, default, hide: [ids], off: [dx, dy], secs, clipMask?: {target, layers: [ids], invert?: bool}}`. Use optional `clipMask` to smoothly clip (or reverse-mask with `invert: true`) layers against a target FBO ONLY while that outfit toggle is worn — e.g. clipping spiky hair cleanly inside a toggleable hood's inset back cavity (`HD_BACK`) with zero outer-rim hair poke at every yaw/pitch angle. Any layer can also set static `clipInvert: true` alongside `clip` for permanent reverse masking.
 - `expr`:
   - `pieces`: static swaps (`tex/expr_<id>.png`) or shared flipbooks (`tex: "<name>"` + `atlas: {cols, rows, fps, intro, loop, pad}`), anchored via `{base, at?, w, h, relA: [1,0,0,1], relT: [tb_x - te_x, tb_y - te_y], op, anim?}`.
   - `faces`: `{hide: [...], add: [...], move: {id: [dx, dy, rotDeg]}, eyes: [r, l], look: [gx, gy]}`.

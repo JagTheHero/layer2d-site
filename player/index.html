@@ -285,7 +285,7 @@ const FS = `#version 300 es
 precision highp float;
 in vec2 vC; out vec4 oCol;
 uniform sampler2D uTex, uHole, uClip, uWipeTex, uOpenTex, uBehindA, uBehindB; uniform highp sampler2D uSkirt;
-uniform float uBehind;                                 // an earring on the far side: cut where her face and neck cover it
+uniform float uBehind, uClipMix;                         // an earring on the far side: cut where her face and neck cover it; clip/reverse-mask blend
 uniform vec2 uBehindShift;                             // (her left lock: where they cover it this far out, screen px)
 uniform int uRigid; uniform vec2 uRigidD;              // an earring turns as its hook does, unbent (its foot hung below the chin)
 uniform int uKind, uHair, uHasD, uGD, uHook, uVis, uHead, uJaw, uNoFade, uHasHole, uHasWipe, uClipOn, uAlphaOnly, uSkirtN;
@@ -1074,7 +1074,8 @@ void main() {
   if (uHasHole == 1) c *= 1.0 - uHoleS * texture(uHole, tc).r;
   if (uCuff.y > 0.0) c *= 1.0 - uCuff.y * (1.0 - smoothstep(uCuff.x - 12.0, uCuff.x + 12.0, sArm));
   if (uHasWipe == 1) c *= clamp((uWipe * (1.0 + uWipeSoft) - texture(uWipeTex, tc).r) / uWipeSoft, 0.0, 1.0);   // fit.WIPE
-  if (uClipOn == 1) c *= texelFetch(uClip, ivec2(gl_FragCoord.xy), 0).a;
+  if (uClipOn == 1) c *= mix(1.0, texelFetch(uClip, ivec2(gl_FragCoord.xy), 0).a, uClipMix);
+  else if (uClipOn == 2) c *= mix(1.0, 1.0 - texelFetch(uClip, ivec2(gl_FragCoord.xy), 0).a, uClipMix);
   if (uBehind > 0.0) { ivec2 q = clamp(ivec2(gl_FragCoord.xy + uBehindShift), ivec2(0), textureSize(uBehindA, 0) - 1);
     c *= 1.0 - uBehind * max(texelFetch(uBehindA, q, 0).a, texelFetch(uBehindB, q, 0).a); }
   oCol = uAlphaOnly == 1 ? vec4(c.a) : c;
@@ -2347,9 +2348,14 @@ function draw(f) {
       else if (op > 0) (after.C04L = [...(after.C04L || [])]).push({ id: ids[j - 1], ...P.expr.pieces[ids[j - 1]], op });
     });
   }
-  const offMove = {}, wearNow = performance.now() / 1000;
-  for (const [g, o] of Object.entries(P.outfits || {})) {       // (opt-in) a garment off, or coming off
-    const w = (f.wear || {})[g] ?? wearAt(g, wearNow); if (w >= 1) continue;
+  const offMove = {}, outfitClip = {}, outfitClipActive = new Set(), wearNow = performance.now() / 1000;
+  for (const [g, o] of Object.entries(P.outfits || {})) {       // (opt-in) a garment off, or coming off (+ conditional clip/reverse mask!)
+    const w = (f.wear || {})[g] ?? wearAt(g, wearNow);
+    if (o.clipMask && w > 0.001 && clipFbo[o.clipMask.target]) {
+      outfitClipActive.add(o.clipMask.target);
+      for (const lid of o.clipMask.layers || []) outfitClip[lid] = { target: o.clipMask.target, invert: !!o.clipMask.invert, mix: w };
+    }
+    if (w >= 1) continue;
     const u = 1 - w, m = o.ease === "in" ? u * u : o.ease === "out" ? 1 - w * w : u, op = o.fade ? Math.min(1, w / o.fade) : w;
     for (const id of o.hide) {
       sleeveOp[id] = (sleeveOp[id] ?? 1) * op;
@@ -2455,7 +2461,7 @@ function draw(f) {
     gl.uniformMatrix2fv(U.uAi, false, [Ai[0], Ai[2], Ai[1], Ai[3]]);
     gl.uniform2f(U.uT, t[0], t[1]); gl.uniform2f(U.uHalf, w2, h2);
     gl.uniform1i(U.uTint, L.tint && hairPick ? 1 : L.eyeTint && eyePick ? 2 : 0);
-    gl.uniform1i(U.uKind, L.kind); gl.uniform1f(U.uOp, piece ? piece.op : k.op * (sleeveOp[L.id] ?? 1) * lidOp);
+    gl.uniform1i(U.uKind, L.kind); gl.uniform1f(U.uOp, piece ? piece.op : k.op * (alphaOnly && outfitClipActive.has(L.id) ? 1 : (sleeveOp[L.id] ?? 1)) * lidOp);
     if (swapTo.size) { const ft = TC.foot || [MM.footY, 0];
       gl.uniform2f(U.uFootTurn, ft[0], swapTo.has(L.id) ? 0 : ft[1] * ct[ct.length - 1]); }
     gl.uniform1i(U.uAlphaOnly, alphaOnly ? 1 : 0);
@@ -2580,8 +2586,14 @@ function draw(f) {
     else gl.uniform1i(U.uHasHole, 0);
     if (L.wipe && !piece) { gl.uniform1i(U.uHasWipe, 1); gl.uniform1f(U.uWipe, k.wipe); gl.uniform1f(U.uWipeSoft, L.wipe); gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, wipes[L.id]); gl.uniform1i(U.uWipeTex, 4); }
     else gl.uniform1i(U.uHasWipe, 0);
-    if (L.clip && clipFbo[L.clip] && (!alphaOnly || L.clip !== L.id)) { gl.uniform1i(U.uClipOn, 1); gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, clipFbo[L.clip].tex); gl.uniform1i(U.uClip, 2); }
-    else gl.uniform1i(U.uClipOn, 0);
+    const oc = !alphaOnly ? outfitClip[L.id] : null;
+    if (L.clip && clipFbo[L.clip] && (!alphaOnly || L.clip !== L.id)) {
+      gl.uniform1i(U.uClipOn, L.clipInvert ? 2 : 1); gl.uniform1f(U.uClipMix, 1.0);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, clipFbo[L.clip].tex); gl.uniform1i(U.uClip, 2);
+    } else if (oc && clipFbo[oc.target] && oc.target !== L.id) {
+      gl.uniform1i(U.uClipOn, oc.invert ? 2 : 1); gl.uniform1f(U.uClipMix, oc.mix);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, clipFbo[oc.target].tex); gl.uniform1i(U.uClip, 2);
+    } else { gl.uniform1i(U.uClipOn, 0); gl.uniform1f(U.uClipMix, 0.0); }
     if (L.behind && !alphaOnly && !piece && k.behind >= 0.5) {
       gl.uniform1f(U.uBehind, 1.0);     // binary occlusion mask (NEVER semi-transparent solid hair over cheek!)
       gl.uniform2f(U.uBehindShift, (L.behindSweep || 0) * (1 - k.behind) * s, 0);
@@ -2612,7 +2624,7 @@ function draw(f) {
     const fb = clipFbo[id];
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb.fb); gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    if (!armHide.has(id) && !handsOn.has(id) && !fc.hide.has(id) && !styleHide.has(id) && sleeveOp[id] !== 0) {
+    if (!armHide.has(id) && !handsOn.has(id) && !fc.hide.has(id) && !styleHide.has(id) && (sleeveOp[id] !== 0 || outfitClipActive.has(id))) {
       const idx = P.layers.findIndex((l) => l.id === id);
       if (idx >= 0) layerDraw(idx, true, fc.move[id] || offMove[id]);
     }
@@ -2988,7 +3000,8 @@ async function start(l2dBuffer = null, l2dName = null) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 6, nLocks, 0, gl.RGBA, gl.FLOAT, lockRows);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   clipOrder = [];
-  for (const L of P.layers) if (L.clipTarget) {
+  const outfitClipTargets = new Set(Object.values(P.outfits || {}).map((o) => o && o.clipMask && o.clipMask.target).filter(Boolean));
+  for (const L of P.layers) if (L.clipTarget || outfitClipTargets.has(L.id)) {
     const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
