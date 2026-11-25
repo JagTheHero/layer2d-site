@@ -67,6 +67,7 @@ async function toggleMic() {
     if (mic.ctx) mic.ctx.close();
     mic.stream = mic.ctx = mic.analyser = null;
     state.params.vowel = null;
+    state.params.micVolume = undefined;
     btn.classList.remove("live");
     state.emit("params:changed");
     return;
@@ -99,6 +100,7 @@ function stepMic() {
   };
   const lo = band(150, 550), mid = band(550, 1400), hi = band(1400, 3200);
   const energy = lo * 0.4 + mid * 0.4 + hi * 0.2;
+  state.params.micVolume = Math.max(0, Math.min(1, (energy - 18) / 110));
   if (energy < 24) state.params.vowel = null;
   else if (hi > mid * 1.1 && hi > lo) state.params.vowel = "I";
   else if (mid > lo * 1.15) state.params.vowel = "A";
@@ -607,6 +609,13 @@ function syncChrome() {
   document.getElementById("vp-pivots").classList.toggle("active", state.view.showPivots);
   document.getElementById("vp-onion").classList.toggle("active", state.view.onionSkin);
   document.getElementById("vp-physics").classList.toggle("active", engine.physics.enabled);
+  const mouthBtn = document.getElementById("vp-mouth");
+  if (mouthBtn) {
+    const labels = (window.Layer2DKeyMouth && window.Layer2DKeyMouth.LABELS) || { pack: "Mouth: Pack", keyshape: "Mouth: Keyshape", keyshape_fang: "Mouth: Fang" };
+    const mm = state.params.mouthMode || "pack";
+    mouthBtn.textContent = labels[mm] || labels.pack;
+    mouthBtn.classList.toggle("active", mm !== "pack");
+  }
   document.getElementById("vp-yaw").textContent = t("vp.yaw", { deg: (state.params.a * 32.5).toFixed(1) }, "Yaw {deg}°");
   const pitchEl = document.getElementById("vp-pitch");
   if (pitchEl) pitchEl.textContent = t("vp.pitch", { deg: (state.params.pitch * 30.0).toFixed(1) }, "Pitch {deg}°");
@@ -658,6 +667,19 @@ document.getElementById("vp-pivots").addEventListener("click", () => { state.vie
 document.getElementById("vp-onion").addEventListener("click", () => { state.view.onionSkin = !state.view.onionSkin; syncChrome(); });
 document.getElementById("vp-physics").addEventListener("click", () => { engine.physics.enabled = !engine.physics.enabled; syncChrome(); });
 document.getElementById("vp-mic").addEventListener("click", toggleMic);
+const vpMouthBtn = document.getElementById("vp-mouth");
+if (vpMouthBtn) {
+  vpMouthBtn.addEventListener("click", () => {
+    const modes = (window.Layer2DKeyMouth && window.Layer2DKeyMouth.MODES) || ["pack", "keyshape", "keyshape_fang"];
+    const labels = (window.Layer2DKeyMouth && window.Layer2DKeyMouth.LABELS) || { pack: "Mouth: Pack", keyshape: "Mouth: Keyshape", keyshape_fang: "Mouth: Fang" };
+    const cur = state.params.mouthMode || "pack";
+    const next = modes[(modes.indexOf(cur) + 1) % modes.length];
+    state.params.mouthMode = next;
+    if (next !== "pack" && engine.km) engine.km.ensurePreset(next);
+    state.emit("params:changed");
+    showToast(`Mouth renderer: ${(labels[next] || next).replace(/^Mouth:\s*/i, "")}`);
+  });
+}
 document.getElementById("vp-cam").addEventListener("click", toggleCam);
 
 /* ---------- Hidden File Input Handlers & Drag-and-Drop ---------- */

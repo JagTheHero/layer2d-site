@@ -143,6 +143,8 @@ export class StudioState {
       eyeX: 0.0,      // -1 .. +1 (live gaze X & Live: Eye Look X blend shape preview)
       eyeY: 0.0,      // -1 .. +1 (live gaze Y & Live: Eye Look Y blend shape preview)
       vowel: null,    // null | "A" | "I" | "U" | "E" | "O"
+      mouthMode: "pack", // "pack" | "keyshape" | "keyshape_fang"
+      micVolume: undefined,
       tailWag: 1.0,
       tailSway: 0.0,
       bodySway: 0.0,

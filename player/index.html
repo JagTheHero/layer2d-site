@@ -108,6 +108,7 @@ button[aria-pressed="true"] { background: var(--accent); border-color: var(--acc
     <span class="label" data-i18n="player.group.live">Live</span>
     <button id="mic" aria-pressed="false" data-i18n="player.btn.mic">Mic</button>
     <button id="lip-mode" aria-pressed="true" data-i18n-attr="title:player.btn.lipTitle" title="Cycle lip-sync engine: Phoneme (LPC formants + consonants) → Basic (3-band AEIOU) → Volume">Lip: Phoneme</button>
+    <button id="mouth-mode" aria-pressed="false" title="Cycle mouth renderer: Pack (default) → Keyshape (Keshin2D contour warp) → Fang (Keshin2D single-fang)">Mouth: Pack</button>
     <span id="phoneme-pill" hidden data-i18n-attr="title:player.phonemeTitle" title="Live detected phoneme → avatar mouth viseme">—</span>
     <button id="cam" aria-pressed="false" data-i18n="player.btn.cam">Cam</button>
     <button id="bg-btn" aria-pressed="false">BG: Light</button>
@@ -147,6 +148,7 @@ button[aria-pressed="true"] { background: var(--accent); border-color: var(--acc
   </div>
 </div>
 
+<script src="mouth_keyshape.js"></script>
 <script>
 "use strict";
 function tr(key, vars = null, fallback = undefined) {
@@ -268,6 +270,8 @@ let P, gl, prog, U = {}, tex = {}, holes = {}, wipes = {}, opens = {}, skirtTex,
 let sheers = {}, chainTex, chainRows, CH = [], fBase = 1;   // (opt-in: meshpack's sheer maps and spring chains + forward mesh F)
 const fUploadBuf = new Float32Array(16 * 16 * 4);
 let ARM = null;                  // (opt-in: the pack's "arm3d") the drawn arms, viewer/arm3d.js
+let KM = null;                   // (opt-in: Keshin2D contour-warped key-shape mouth renderer)
+let kmLastT = 0;
 const chainIds = new Int32Array(8);
 const visRows = new Float32Array(4 * 24);
 
@@ -1560,8 +1564,23 @@ let lipMode = (() => {
   if (qp) return normalizeLipMode(qp);
   try { return normalizeLipMode(localStorage.getItem(LIP_MODE_KEY) || "phoneme"); } catch { return "phoneme"; }
 })();
+const MOUTH_MODES = (window.Layer2DKeyMouth && window.Layer2DKeyMouth.MODES) || ["pack", "keyshape", "keyshape_fang"];
+const MOUTH_LABELS = (window.Layer2DKeyMouth && window.Layer2DKeyMouth.LABELS) || { pack: "Mouth: Pack", keyshape: "Mouth: Keyshape", keyshape_fang: "Mouth: Fang" };
+const MOUTH_MODE_KEY = "layer2d_mouth_mode";
+function normalizeMouthMode(v) {
+  const s = String(v || "").trim().toLowerCase();
+  return MOUTH_MODES.includes(s) ? s : "pack";
+}
+function mouthLabel(mode) {
+  return tr(`player.mouth.${mode}`, null, MOUTH_LABELS[mode] || MOUTH_LABELS.pack);
+}
+let mouthMode = (() => {
+  const qp = QP.get("mouth");
+  if (qp) return normalizeMouthMode(qp);
+  try { return normalizeMouthMode(localStorage.getItem(MOUTH_MODE_KEY) || "pack"); } catch { return "pack"; }
+})();
 const mic = { on: false, ctx: null, stream: null, analyser: null, freq: null, time: null, state: makeLipState() };
-const cam = { on: false, remoteOn: false, loading: false, landmarker: null, stream: null, video: null, lastVideoT: -1, eyeOpen: [1, 1], gaze: [0, 0], vowel: null, cand: null, candN: 0 };
+const cam = { on: false, remoteOn: false, loading: false, landmarker: null, stream: null, video: null, lastVideoT: -1, eyeOpen: [1, 1], gaze: [0, 0], vowel: null, cand: null, candN: 0, mouth: null };
 const obsHost = {
   on: false, loading: false, id: null, peer: null, conns: new Set(), calls: new Map(),
   audioTunnel: (() => {
@@ -1989,7 +2008,17 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
   if (Hd) { for (const h of Hd.hide) hide.add(h); add = add.concat(Hd.add); }
   const vw = vowelOverride !== undefined ? vowelOverride : (snap ? null : ctl.vowel);
   const vId = vowelPieceId(vw);
-  if (vId && !hide.has("M01")) {
+  const m01 = P.layers && P.layers.find((L) => L.id === "M01" || /^M\d/.test(L.id));
+  const useKeyMouth = !!(mouthMode !== "pack" && KM && m01 && KM.isReady(mouthMode));
+  if (useKeyMouth) {
+    hide.add(m01.id);
+    for (const L of P.layers) if (/^M\d/.test(L.id)) hide.add(L.id);
+    if (Array.isArray(X.vowelHide)) for (const h of X.vowelHide) hide.add(h);
+    add = add.filter((pid) => {
+      const pc = X.pieces && X.pieces[pid];
+      return !pc || (pc.base !== m01.id && !/^M\d/.test(pid));
+    });
+  } else if (vId && !hide.has("M01")) {
     const base = (X.pieces[vId] && X.pieces[vId].base) || "M01";
     hide.add(base);
     for (const L of P.layers) if (/^M\d/.test(L.id)) hide.add(L.id);
@@ -2018,7 +2047,7 @@ function faceAt(t, snap, vowelOverride) {       // what to hide, the pieces to d
   const eg = [!snap && camActive() ? eo[0] * cam.eyeOpen[0] : eo[0], !snap && camActive() ? eo[1] * cam.eyeOpen[1] : eo[1], ek, ek];
   face.eye = face.eye.map((v, j) => v + (eg[j] - v) * (camActive() && !snap ? Math.min(1, k * 2.5) : k));
   return { hide, after, move, blend: F.blend || null, eyes: face.eye.slice(), gaze: snap ? lk || [0, 0] : [gaze.x, gaze.y], still: Hd ? Hd.still : [], shut,
-           over: (Hd && Hd.over) || {} };
+           over: (Hd && Hd.over) || {}, useKeyMouth, faceName: name, keyMouthLayer: m01 || null };
 }
 
 // the eyes as the face (and the Eyes slider) opens them: per side, how far open, the iris's size, where the pupil's middle
@@ -2303,6 +2332,26 @@ function draw(f) {
   // the one nearest the raise, swapped at the raise midway between two, as 2D rigs swap sprites (the drawings never line
   // up at any raise, IoU ~0.56, so any dissolve between them showed both cuffs)
   const after = { ...fc.after }, sleeveOp = {};
+  if (fc.useKeyMouth && KM && fc.keyMouthLayer) {
+    const nowSec = performance.now() / 1000;
+    const kmDt = kmLastT ? Math.min(0.05, Math.max(0.001, nowSec - kmLastT)) : 1 / 60;
+    kmLastT = nowSec;
+    const lipSt = obsAudio.active ? obsAudio.state : mic.on ? mic.state : null;
+    const kmProbs = lipSt ? lipSt.probs : (obsViewer.remoteLipProbs || null);
+    const kmOpen = lipSt ? lipSt.open : !!obsViewer.remoteLipOpen;
+    const kmVol = lipSt ? Math.min(1, Math.max(0, (lipSt.rms - lipSt.floor * 1.4) / Math.max(0.06, lipSt.floor * 9)))
+                        : (obsViewer.remoteLipVol || 0);
+    KM.stepAndDraw(mouthMode, {
+      faceName: fc.faceName,
+      probs: kmProbs,
+      open: kmOpen,
+      volume: kmVol,
+      vowel: ctl.vowel,
+      cam: cam.on ? cam.mouth : null,
+    }, kmDt);
+    const kmBase = fc.keyMouthLayer.id;
+    (after[kmBase] = [...(after[kmBase] || [])]).push(KM.makePiece(fc.keyMouthLayer, "__keymouth__"));
+  }
   for (const s of ["R", "L"]) {     // (LID: shutting, the lash fades into the closed eye drawn, unless the face drew it)
     const id = "E09" + s, b = "E05" + s;
     if (eyes[s].fade > 0 && P.expr.pieces[id] && !fc.hide.has(b))
@@ -2578,7 +2627,8 @@ function draw(f) {
     const hs = L.kind === 2 ? "R" : "L", palm = L.palm && !piece && rz(hs) + (f["elbow" + hs] || 0) > MM.wrist.palm;
     const tid = piece ? "expr_" + piece.id : handAfter[L.id] ? L.id + "_posed" : L.up && cut > 0.5 ? L.id + "_up" : palm ? L.id + "_palm" : L.id;   // (export.RAISE_UP:
     // under raised sleeves; export.PALM: the forearm pointing up, the hand open)
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex[tid]); gl.uniform1i(U.uTex, 0);
+    const texObj = (piece && piece.id === "__keymouth__" && KM) ? KM.outTex : tex[tid];
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texObj); gl.uniform1i(U.uTex, 0);
     if (L.hole && !piece) { gl.uniform1i(U.uHasHole, 1);
       const ra = L.kind === 2 || L.kind === 3 ? rz(L.kind === 2 ? "R" : "L") : f.raise || 0;
       const r = Math.min(1, Math.max(0, (Math.abs(ra) - 0.02) / 0.04));  // (export.RAISE_CUT; quick: cut slowly, its inner side showed see-through)
@@ -2893,6 +2943,8 @@ async function start(l2dBuffer = null, l2dName = null) {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
   }
+  if (!KM && window.Layer2DKeyMouth) KM = window.Layer2DKeyMouth.createKeyMouth(gl);
+  if (KM && mouthMode !== "pack") KM.ensurePreset(mouthMode);
   if (P.arm3d && /[?&]arm3d\b/.test(location.search)) window.__arm3d = ARM = (await import("./arm3d.js")).create(gl, P, { VS, M, rotP, torsoFwd, headFwd, layerFwd, loadAssetBlob });
   const armFlag = (k) => ARM && ARM.on && new RegExp(`[?&]${k}\\b`).test(location.search);   // (opt-in: arm3d_*.js)
   if (armFlag("armpanel")) import("./arm3d_panel.js").then((m) => m.panel(ARM)).catch(console.warn);
@@ -3514,6 +3566,25 @@ if ($("lip-mode")) {
     flashStatus(tr("player.msg.lipMode", { mode: lipModeName(next) }, "lip-sync mode: {mode}"));
   };
 }
+function setMouthMode(mode, save = true) {
+  mouthMode = normalizeMouthMode(mode);
+  const btn = $("mouth-mode");
+  if (btn) {
+    btn.textContent = mouthLabel(mouthMode);
+    press(btn, mouthMode !== "pack");
+  }
+  if (KM && mouthMode !== "pack") KM.ensurePreset(mouthMode);
+  if (save) { try { localStorage.setItem(MOUTH_MODE_KEY, mouthMode); } catch {} }
+  if (obsHost.on) sendObsPose(performance.now() / 1000, true);
+}
+if ($("mouth-mode")) {
+  setMouthMode(mouthMode, false);
+  $("mouth-mode").onclick = () => {
+    const next = MOUTH_MODES[(MOUTH_MODES.indexOf(mouthMode) + 1) % MOUTH_MODES.length];
+    setMouthMode(next, true);
+    flashStatus(tr("player.msg.mouthMode", { mode: mouthLabel(next).replace(/^Mouth:\s*/i, "") }, "mouth renderer: {mode}"));
+  };
+}
 function updateMic(now) {
   if (!mic.analyser) return;
   ctl.vowel = analyzeAudioLipSync(mic.analyser, mic.time, mic.freq, mic.ctx.sampleRate || 48000, mic.state, lipMode, now, 0);
@@ -3564,7 +3635,7 @@ function stopCam() {
   cam.on = false; cam.loading = false; cam.lastVideoT = -1;
   if (cam.stream) { for (const t of cam.stream.getTracks()) t.stop(); cam.stream = null; }
   if (cam.video) { cam.video.srcObject = null; }
-  cam.eyeOpen = [1, 1]; cam.gaze = [0, 0]; cam.vowel = null; cam.cand = null; cam.candN = 0;
+  cam.eyeOpen = [1, 1]; cam.gaze = [0, 0]; cam.vowel = null; cam.cand = null; cam.candN = 0; cam.mouth = null;
   if (!mic.on) ctl.vowel = null;
   press($("cam"), false);
 }
@@ -3599,6 +3670,8 @@ function updateCam() {
     const jaw = bs.jawOpen || 0, funnel = bs.mouthFunnel || 0, pucker = bs.mouthPucker || 0;
     const smile = ((bs.mouthSmileLeft || 0) + (bs.mouthSmileRight || 0)) * 0.5;
     const stretch = ((bs.mouthStretchLeft || 0) + (bs.mouthStretchRight || 0)) * 0.5;
+    const frown = ((bs.mouthFrownLeft || 0) + (bs.mouthFrownRight || 0)) * 0.5;
+    cam.mouth = { jaw, funnel, pucker, smile, frown, stretch };
     let v = null;
     if (jaw >= 0.08 || funnel >= 0.25 || pucker >= 0.35) {
       if (pucker > 0.35 || (funnel > 0.28 && jaw < 0.28)) v = "U";
@@ -4103,6 +4176,10 @@ function buildObsPose(now) {
     eyeOpen: cam.on ? [cam.eyeOpen[0], cam.eyeOpen[1]] : null,
     gaze: cam.on ? [cam.gaze[0], cam.gaze[1]] : null,
     vowel: ctl.vowel,
+    mouthMode,
+    lipProbs: mic.on ? mic.state.probs : null,
+    lipOpen: mic.on ? mic.state.open : false,
+    lipVol: mic.on ? Math.min(1, Math.max(0, (mic.state.rms - mic.state.floor * 1.4) / Math.max(0.06, mic.state.floor * 9))) : 0,
     auto: ctl.auto,
     view,
     face: face.pick,
@@ -4239,7 +4316,17 @@ function applyObsPose(msg) {
   if (typeof msg.lift === "number") ctl.liftTarget = msg.lift;
   // When tunneled WebRTC audio is active inside OBS, OBS's local pre-delay phoneme analyzer
   // owns ctl.vowel so audio output and avatar mouth are locked to the exact same OBS frame clock!
-  if (!obsAudio.active) ctl.vowel = msg.vowel || null;
+  if (!obsAudio.active) {
+    ctl.vowel = msg.vowel || null;
+    obsViewer.remoteLipProbs = msg.lipProbs || null;
+    obsViewer.remoteLipOpen = !!msg.lipOpen;
+    obsViewer.remoteLipVol = typeof msg.lipVol === "number" ? msg.lipVol : 0;
+  } else {
+    obsViewer.remoteLipProbs = null;
+    obsViewer.remoteLipOpen = false;
+    obsViewer.remoteLipVol = 0;
+  }
+  if (typeof msg.mouthMode === "string" && normalizeMouthMode(msg.mouthMode) !== mouthMode) setMouthMode(msg.mouthMode, false);
   if (Array.isArray(msg.eyeOpen) && msg.eyeOpen.length === 2) {
     cam.remoteOn = true;
     cam.eyeOpen[0] = msg.eyeOpen[0]; cam.eyeOpen[1] = msg.eyeOpen[1];
@@ -4416,6 +4503,7 @@ if (window.Layer2DI18n && typeof window.Layer2DI18n.onChange === "function") {
   window.Layer2DI18n.onChange(() => {
     setBg(bgMode);
     setLipMode(lipMode, false);
+    setMouthMode(mouthMode, false);
     updateObsLinkUi();
     updateSavedUi(lastSavedName);
   });

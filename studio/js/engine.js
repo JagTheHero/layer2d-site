@@ -100,6 +100,8 @@ export class Layer2DEngine {
     this.fboH = 0;
     this._offFbo = null;
     this._offCanvas = null;
+    this.km = null;
+    this._kmLastT = 0;
     this.ready = false;
 
     // Physics preview tuning overrides (from Studio Physics / Animate panels)
@@ -147,6 +149,7 @@ export class Layer2DEngine {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    if (window.Layer2DKeyMouth) this.km = window.Layer2DKeyMouth.createKeyMouth(gl);
   }
 
   _uploadTex(im, mip = true) {
@@ -1137,7 +1140,23 @@ export class Layer2DEngine {
       add = add.concat(Hd.add || []);
     }
     const vw = params.vowel;
-    if (vw) {
+    const mouthMode = (params && params.mouthMode) || "pack";
+    const m01 = P.layers && P.layers.find((L) => L.id === "M01" || /^M\d/.test(L.id));
+    if (mouthMode !== "pack" && this.km) this.km.ensurePreset(mouthMode);
+    const useKeyMouth = !!(mouthMode !== "pack" && this.km && m01 && this.km.isReady(mouthMode));
+    if (useKeyMouth) {
+      hide.add(m01.id);
+      for (const L of P.layers) {
+        if (/^M\d/.test(L.id)) hide.add(L.id);
+      }
+      if (Array.isArray(X.vowelHide)) {
+        for (const h of X.vowelHide) hide.add(h);
+      }
+      add = add.filter((pid) => {
+        const ap = X.pieces && X.pieces[pid];
+        return !ap || (ap.base !== m01.id && !/^M\d/.test(pid));
+      });
+    } else if (vw) {
       const map = X.vowels || DEFAULT_VOWELS;
       const vid = map[String(vw).toUpperCase()];
       const pc = vid && X.pieces && X.pieces[vid];
@@ -1214,6 +1233,10 @@ export class Layer2DEngine {
       eyes: eyeArr,
       gaze: F.look || [params.gazeX ?? (params.eyeX || 0) * 7, params.gazeY ?? (params.eyeY || 0) * 3],
       over: (Hd && Hd.over) || {},
+      useKeyMouth,
+      mouthMode,
+      faceName: name,
+      keyMouthLayer: m01 || null,
     };
   }
 
@@ -1368,6 +1391,18 @@ export class Layer2DEngine {
     }
     const eyes = this._eyeState(fc.eyes, fc.gaze);
     const after = { ...fc.after };
+    if (fc.useKeyMouth && this.km && fc.keyMouthLayer) {
+      const nowSec = performance.now() / 1000;
+      const kmDt = this._kmLastT ? Math.min(0.05, Math.max(0.001, nowSec - this._kmLastT)) : 1 / 60;
+      this._kmLastT = nowSec;
+      this.km.stepAndDraw(fc.mouthMode, {
+        faceName: fc.faceName,
+        vowel: params.vowel || null,
+        volume: params.micVolume,
+      }, kmDt);
+      const kmBase = fc.keyMouthLayer.id;
+      (after[kmBase] = [...(after[kmBase] || [])]).push(this.km.makePiece(fc.keyMouthLayer, "__keymouth__"));
+    }
     for (const s of ["R", "L"]) {
       const id = "E09" + s, b = "E05" + s;
       if (eyes[s] && eyes[s].fade > 0 && P.expr.pieces && P.expr.pieces[id] && !fc.hide.has(b)) {
@@ -1402,7 +1437,8 @@ export class Layer2DEngine {
       const L = P.layers[i], k = key.layers[i];
       if (!L || !k) return false;
       const tid = piece ? "expr_" + piece.id : L.id;
-      if (!this.tex[tid]) return false;
+      const texObj = (piece && piece.id === "__keymouth__" && this.km) ? this.km.outTex : this.tex[tid];
+      if (!texObj) return false;
       const effOp = (piece ? (piece.op ?? 1) : k.op * (alphaOnly && outfitClipActive.has(L.id) ? 1 : (sleeveOp[L.id] ?? 1))) * (alphaOnly ? 1 : passOp);
       if (effOp <= 0.0005 || (k.wipe ?? 1) <= 0.0005) return false;
 
@@ -1595,7 +1631,7 @@ export class Layer2DEngine {
       }
 
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, this.tex[tid]);
+      gl.bindTexture(gl.TEXTURE_2D, texObj);
       gl.uniform1i(U.uTex, 0);
       if (L.hole && !piece && this.holes[L.id]) {
         gl.uniform1i(U.uHasHole, 1);

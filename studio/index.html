@@ -258,6 +258,8 @@
           <span class="vp-sep"></span>
           <button class="vp-btn" id="vp-mic" title="Test Live AEIOU Mic Lip-Sync" data-i18n="vp.mic" data-i18n-attr="title:vp.micTitle" type="button">Mic</button>
           <span class="vp-sep"></span>
+          <button class="vp-btn" id="vp-mouth" title="Cycle mouth renderer: Pack (default) → Keyshape (Keshin2D) → Fang" type="button">Mouth: Pack</button>
+          <span class="vp-sep"></span>
           <button class="vp-btn" id="vp-cam" title="Test Live Webcam Tracking" data-i18n="vp.webcam" data-i18n-attr="title:vp.webcamTitle" type="button">Webcam</button>
         </div>
       </div>
@@ -352,6 +354,7 @@
 <input id="file-fx-tex" type="file" accept="image/png,image/webp" hidden />
 <video id="cam-video" playsinline muted hidden></video>
 
+<script src="./js/mouth_keyshape.js"></script>
 <script type="module" src="./js/main.js"></script>
 </body>
 </html>
