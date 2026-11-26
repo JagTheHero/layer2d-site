@@ -105,6 +105,7 @@ export class Layer2DEngine {
     this._offFbo = null;
     this._offCanvas = null;
     this.km = null;
+    this.m3d = null;
     this._kmLastT = 0;
     this.ready = false;
 
@@ -167,6 +168,7 @@ export class Layer2DEngine {
       this.SU[info.name] = gl.getUniformLocation(this.shadowProg, info.name);
     }
     if (window.Layer2DKeyMouth) this.km = window.Layer2DKeyMouth.createKeyMouth(gl);
+    if (window.Layer2DMesh3D) this.m3d = window.Layer2DMesh3D.createMesh3D(gl);
   }
 
   _uploadTex(im, mip = true) {
@@ -1615,7 +1617,7 @@ export class Layer2DEngine {
       return true;
     };
 
-    const drawLayer = (i, alphaOnly, move, piece, useOutfitClip = false) => {
+    const drawLayer = (i, alphaOnly, move, piece, useOutfitClip = false, curFb = null) => {
       const L = drawLayers[i], k = drawKeyLayers[i];
       if (!L || !k) return false;
       const tid = piece ? "expr_" + piece.id : L.id;
@@ -1623,6 +1625,35 @@ export class Layer2DEngine {
       if (!texObj) return false;
       const effOp = (piece ? (piece.op ?? 1) : k.op * (alphaOnly && !useOutfitClip && outfitClipActive.has(L.id) ? 1 : (sleeveOp[L.id] ?? 1))) * (alphaOnly ? 1 : passOp);
       if (effOp <= 0.0005 || (k.wipe ?? 1) <= 0.0005) return false;
+
+      if (L.mesh3d && !piece && this.m3d) {
+        const oc3 = (!alphaOnly || useOutfitClip) ? outfitClip[L.id] : null;
+        let clipOn = 0, clipMix = 0, clipTex = null;
+        if (L.clip && this.clipFbo[L.clip] && (!alphaOnly || L.clip !== L.id)) {
+          clipOn = L.clipInvert ? 2 : 1; clipMix = 1.0; clipTex = this.clipFbo[L.clip].tex;
+        } else if (oc3 && this.clipFbo[oc3.target] && oc3.target !== L.id) {
+          clipOn = oc3.invert ? 2 : 1; clipMix = oc3.mix; clipTex = this.clipFbo[oc3.target].tex;
+        }
+        return this.m3d.draw({
+          spec: L.mesh3d,
+          texObj,
+          vw,
+          W,
+          H,
+          m,
+          head: P.head,
+          motion: MM,
+          effOp,
+          alphaOnly,
+          move,
+          clipOn,
+          clipMix,
+          clipTex,
+          targetFb: curFb,
+          restoreProg: this.prog,
+          restoreVao: this.vao,
+        });
+      }
 
       const ey = L.eye && !(piece && L.eye.mode % 3 === 2) ? eyes[L.eye.side] : null;
       const lidOp = ey && L.eye.mode % 3 === 2 ? Math.min(1, 2 - 2 * ey.fade) : 1;
@@ -1887,7 +1918,7 @@ export class Layer2DEngine {
       const clipVis = isVisible(id) || (outfitClipActive.has(id) && !(soloId && id !== soloId) && !(hiddenIds && hiddenIds.has(id)) && !styleHide.has(id) && !fc.hide.has(id));
       if (clipVis) {
         const idx = drawLidx[id];
-        if (idx !== undefined) drawLayer(idx, true, fc.move[id], null);
+        if (idx !== undefined) drawLayer(idx, true, fc.move[id], null, false, fb.fb);
       }
     }
 
@@ -1907,7 +1938,7 @@ export class Layer2DEngine {
         for (const cid of sh.casters || []) {
           if (!isVisible(cid)) continue;
           const idx = drawLidx[cid];
-          if (idx !== undefined && drawLayer(idx, true, fc.move[cid], null, true)) drawn++;
+          if (idx !== undefined && drawLayer(idx, true, fc.move[cid], null, true, cfb.fb)) drawn++;
         }
         if (!drawn) { shadowActive[si] = false; continue; }
         const rlist = sh.receivers || [];
@@ -1922,7 +1953,7 @@ export class Layer2DEngine {
           for (const rid of rlist) {
             if (!isVisible(rid)) continue;
             const idx = drawLidx[rid];
-            if (idx !== undefined && drawLayer(idx, true, fc.move[rid], null, true)) rdrawn++;
+            if (idx !== undefined && drawLayer(idx, true, fc.move[rid], null, true, this.shadowRecvFbo[si].fb)) rdrawn++;
           }
           if (!rdrawn) { shadowActive[si] = false; continue; }
         }
@@ -1974,15 +2005,15 @@ export class Layer2DEngine {
 
     for (let i = 0; i < drawLayers.length; i++) {
       const id = drawLayers[i].id;
-      if (!over[id] && isVisible(id)) drawLayer(i, false, fc.move[id], null);
+      if (!over[id] && isVisible(id)) drawLayer(i, false, fc.move[id], null, false, targetFb);
       if (!styleHide.has(id)) {
         for (const pc of after[id] || []) {
           const j = pc.at ? drawLidx[pc.base] : i;
-          if (j !== undefined && !styleHide.has(pc.base)) drawLayer(j, false, fc.move[pc.base], pc);
+          if (j !== undefined && !styleHide.has(pc.base)) drawLayer(j, false, fc.move[pc.base], pc, false, targetFb);
         }
       }
       for (const j of overAt[id] || []) {
-        if (isVisible(drawLayers[j].id)) drawLayer(j, false, fc.move[drawLayers[j].id], null);
+        if (isVisible(drawLayers[j].id)) drawLayer(j, false, fc.move[drawLayers[j].id], null, false, targetFb);
       }
       for (const [si, sh] of shadowsAfter[id] || []) drawShadow(si, sh);
     }

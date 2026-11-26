@@ -149,6 +149,7 @@ button[aria-pressed="true"] { background: var(--accent); border-color: var(--acc
 </div>
 
 <script src="mouth_keyshape.js"></script>
+<script src="mesh3d.js"></script>
 <script>
 "use strict";
 function tr(key, vars = null, fallback = undefined) {
@@ -266,11 +267,12 @@ const KIND = { head: 0, torso: 1, armR: 2, armL: 3, skirt: 4, hips: 5, leg: 6 };
 let hairPick = null;             // the Hair buttons' colour (export.TINT), or her own
 let eyePick = null;              // the Eyes buttons' (export.EYE_TINT)
 let stylePick = null;            // the Style buttons' hairstyle (export.STYLE_*), or her own
-let P, gl, prog, U = {}, shadowProg = null, SU = {}, tex = {}, holes = {}, wipes = {}, opens = {}, skirtTex, lockTex, lockRows, clipFbo = {}, clipOrder = [], shadowFbo = [], shadowRecvFbo = [], view = "bust";
+let P, gl, prog, quadVao = null, U = {}, shadowProg = null, SU = {}, tex = {}, holes = {}, wipes = {}, opens = {}, skirtTex, lockTex, lockRows, clipFbo = {}, clipOrder = [], shadowFbo = [], shadowRecvFbo = [], view = "bust";
 let sheers = {}, chainTex, chainRows, CH = [], fBase = 1;   // (opt-in: meshpack's sheer maps and spring chains + forward mesh F)
 const fUploadBuf = new Float32Array(16 * 16 * 4);
 let ARM = null;                  // (opt-in: the pack's "arm3d") the drawn arms, viewer/arm3d.js
 let KM = null;                   // (opt-in: Keshin2D contour-warped key-shape mouth renderer)
+let M3D = null;                  // (opt-in: L.mesh3d) real-time rigid 3D accessory mesh renderer
 let kmLastT = 0;
 const chainIds = new Int32Array(8);
 const visRows = new Float32Array(4 * 24);
@@ -2297,6 +2299,7 @@ function skyInit() {
   gl.useProgram(S.mapProg); gl.uniform1i(S.MU.uN, 12); gl.uniform1i(S.MU.uArcs, 14); gl.uniformMatrix3fv(S.MU.uCam, false, S.cam);
   gl.uniform4f(S.MU.uGeo, ...S.geo); gl.uniform4f(S.MU.uMarg, ...S.marg); gl.uniform2f(S.MU.uArcX, ...SKY_X);
   gl.useProgram(prog);
+  if (quadVao) gl.bindVertexArray(quadVao);
   [["uSkyMap", 11], ["uSkyN", 12], ["uSkyProf", 13], ["uSkyArcs", 14], ["uSkyLut", 15]].forEach(([k, u]) => gl.uniform1i(U[k], u));
   gl.uniformMatrix3fv(U.uSkyCam, false, S.cam); gl.uniform4f(U.uSkyGeo, ...S.geo); gl.uniform4f(U.uSkyMarg, ...S.marg);
   gl.uniform4f(U.uSkyFrame, ...S.frame); gl.uniform2f(U.uSkyArcX, ...SKY_X);
@@ -2334,6 +2337,7 @@ function draw(f) {
   const key = keyAt(f.a), mg = TC ? margin(f) + Math.max(...ct.map(Math.abs)) * (TC.r || MM.bodyR)
     + Math.abs(ct[ct.length - 1] * (TC.foot || [0, 0])[1]) * Math.max(0, MM.footY - (TC.foot || [MM.footY])[0]) : margin(f);
   gl.useProgram(prog);
+  if (quadVao) gl.bindVertexArray(quadVao);
   gl.uniform4f(U.uView, ...vw);
   gl.uniform1f(U.uLean, f.lean); gl.uniform1f(U.uBounce, f.bounce); gl.uniform1f(U.uSway, f.sway); gl.uniform1f(U.uBreath, f.breath);
   gl.uniform1f(U.uBody, f.body); gl.uniform1f(U.uRoll, MM.roll0 + f.roll); gl.uniform2f(U.uBreast, ...(f.breasts || [0, 0]));
@@ -2486,9 +2490,27 @@ function draw(f) {
   }
 
   // a layer, or (piece) an expression's piece riding on it; move: a face's move of the layer about its middle
-  const layerDraw = (i, alphaOnly, move, piece, useOutfitClip = false) => {
+  const layerDraw = (i, alphaOnly, move, piece, useOutfitClip = false, curFb = null) => {
     const L = P.layers[i], k = key.layers[i];
     if (k.op <= 0.0005 || k.wipe <= 0.0005) return false;
+    if (L.mesh3d && !piece && M3D) {
+      const texObj = tex[L.id];
+      if (!texObj) return false;
+      const effOp = k.op * (alphaOnly && !useOutfitClip && outfitClipActive.has(L.id) ? 1 : (sleeveOp[L.id] ?? 1));
+      if (effOp <= 0.0005) return false;
+      const oc3 = (!alphaOnly || useOutfitClip) ? outfitClip[L.id] : null;
+      let clipOn = 0, clipMix = 0, clipTex = null;
+      if (L.clip && clipFbo[L.clip] && (!alphaOnly || L.clip !== L.id)) {
+        clipOn = L.clipInvert ? 2 : 1; clipMix = 1.0; clipTex = clipFbo[L.clip].tex;
+      } else if (oc3 && clipFbo[oc3.target] && oc3.target !== L.id) {
+        clipOn = oc3.invert ? 2 : 1; clipMix = oc3.mix; clipTex = clipFbo[oc3.target].tex;
+      }
+      return M3D.draw({
+        spec: L.mesh3d, texObj, vw, W, H, m: f, head: P.head, motion: MM,
+        effOp, alphaOnly, move, clipOn, clipMix, clipTex,
+        targetFb: curFb, restoreProg: prog, restoreVao: quadVao,
+      });
+    }
     const ey = L.eye && !(piece && L.eye.mode % 3 === 2) ? eyes[L.eye.side] : null;   // a closed eye rides the lid as drawn
     const lidOp = ey && L.eye.mode % 3 === 2 ? Math.min(1, 2 - 2 * ey.fade) : 1;     // (modes 2, 5: the lids' lashes)
     let A = k.A, t = k.t;
@@ -2730,7 +2752,7 @@ function draw(f) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb.fb); gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     if (!armHide.has(id) && !handsOn.has(id) && !fc.hide.has(id) && !styleHide.has(id) && (sleeveOp[id] !== 0 || outfitClipActive.has(id))) {
       const idx = P.layers.findIndex((l) => l.id === id);
-      if (idx >= 0) layerDraw(idx, true, fc.move[id] || offMove[id]);
+      if (idx >= 0) layerDraw(idx, true, fc.move[id] || offMove[id], null, false, fb.fb);
     }
   }
   // Real-time cast-shadow caster & multi-receiver alpha passes (respects live turn/pitch/roll/physics/styleHide/outfitClip!)
@@ -2746,7 +2768,7 @@ function draw(f) {
       for (const cid of sh.casters || []) {
         if (armHide.has(cid) || handsOn.has(cid) || fc.hide.has(cid) || styleHide.has(cid) || sleeveOp[cid] === 0) continue;
         const idx = lidx[cid];
-        if (idx !== undefined && layerDraw(idx, true, fc.move[cid] || offMove[cid], null, true)) drawn++;
+        if (idx !== undefined && layerDraw(idx, true, fc.move[cid] || offMove[cid], null, true, cfb.fb)) drawn++;
       }
       if (!drawn) { shadowActive[si] = false; continue; }
       const rlist = sh.receivers || [];
@@ -2757,7 +2779,7 @@ function draw(f) {
         for (const rid of rlist) {
           if (armHide.has(rid) || handsOn.has(rid) || fc.hide.has(rid) || styleHide.has(rid) || sleeveOp[rid] === 0) continue;
           const idx = lidx[rid];
-          if (idx !== undefined && layerDraw(idx, true, fc.move[rid] || offMove[rid], null, true)) rdrawn++;
+          if (idx !== undefined && layerDraw(idx, true, fc.move[rid] || offMove[rid], null, true, shadowRecvFbo[si].fb)) rdrawn++;
         }
         if (!rdrawn) { shadowActive[si] = false; continue; }
       }
@@ -2789,6 +2811,7 @@ function draw(f) {
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, null);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(prog);
+  if (quadVao) gl.bindVertexArray(quadVao);
   };
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, null);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H);
@@ -3054,7 +3077,7 @@ async function start(l2dBuffer = null, l2dName = null) {
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     const nU = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
     for (let i = 0; i < nU; i++) { const info = gl.getActiveUniform(prog, i), name = info.name.replace(/\[0\]$/, ""); U[name] = gl.getUniformLocation(prog, name); }
-    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    quadVao = gl.createVertexArray(); gl.bindVertexArray(quadVao);
     const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -3069,6 +3092,7 @@ async function start(l2dBuffer = null, l2dName = null) {
     for (let i = 0; i < nSU; i++) { const info = gl.getActiveUniform(shadowProg, i); SU[info.name] = gl.getUniformLocation(shadowProg, info.name); }
   }
   if (!KM && window.Layer2DKeyMouth) KM = window.Layer2DKeyMouth.createKeyMouth(gl);
+  if (!M3D && window.Layer2DMesh3D) M3D = window.Layer2DMesh3D.createMesh3D(gl);
   const initKmMode = (window.Layer2DKeyMouth && window.Layer2DKeyMouth.resolveMode)
     ? window.Layer2DKeyMouth.resolveMode(mouthMode, P)
     : (mouthMode !== "pack" ? mouthMode : null);
@@ -3224,6 +3248,7 @@ async function start(l2dBuffer = null, l2dName = null) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   // constants that never change
   gl.useProgram(prog);
+  if (quadVao) gl.bindVertexArray(quadVao);
   const H0 = P.head, MM = P.motion;
   if (MM.hips) Object.assign(HIPS, MM.hips);                    // (opt-in: an avatar's own hip joints, canon px)
   if (MM.puppetFace) PUPPET.face = MM.puppetFace;               // (opt-in: and the face ellipse the puppet's hands avoid)
