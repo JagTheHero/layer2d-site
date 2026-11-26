@@ -151,6 +151,7 @@ export class StudioState {
       breath: 0.0,
       face: null,
       hold: null,
+      style: null,
       wear: {},
       blend: {},      // { [blendShapeId]: weight }
     };
@@ -253,6 +254,7 @@ export class StudioState {
     this.params.vowel = null;
     this.params.face = null;
     this.params.hold = null;
+    this.params.style = null;
     this.params.wear = {};
     for (const [g, o] of Object.entries(pack.outfits || {})) {
       this.params.wear[g] = o.default === false ? 0 : 1;

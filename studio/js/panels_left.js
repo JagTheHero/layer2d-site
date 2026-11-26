@@ -878,6 +878,21 @@ export class LeftPanels {
       this.toggleListEl.appendChild(row);
     }
 
+    for (const sName of Object.keys(P.hairStyles || {})) {
+      const on = st.params.style === sName;
+      const row = document.createElement("div");
+      row.className = "toggle-row";
+      row.innerHTML = `
+        <span class="toggle-name">${sName}</span>
+        <button class="switch" type="button" data-style="${sName}" aria-pressed="${on ? "true" : "false"}"></button>
+      `;
+      row.querySelector(".switch").addEventListener("click", () => {
+        st.params.style = st.params.style === sName ? null : sName;
+        st.emit("params:changed");
+      });
+      this.toggleListEl.appendChild(row);
+    }
+
     for (const hName of Object.keys((P.expr && P.expr.holds) || {})) {
       const on = st.params.hold === hName;
       const row = document.createElement("div");
@@ -902,6 +917,9 @@ export class LeftPanels {
     this.exprGridEl.querySelectorAll(".expr-card").forEach((c) => {
       const nm = c.dataset.face;
       c.classList.toggle("active", st.params.face === nm || (!st.params.face && nm === "Neutral"));
+    });
+    this.toggleListEl.querySelectorAll(".switch[data-style]").forEach((s) => {
+      s.setAttribute("aria-pressed", st.params.style === s.dataset.style ? "true" : "false");
     });
     this.toggleListEl.querySelectorAll(".switch[data-hold]").forEach((s) => {
       s.setAttribute("aria-pressed", st.params.hold === s.dataset.hold ? "true" : "false");

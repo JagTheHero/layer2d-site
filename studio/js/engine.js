@@ -239,10 +239,18 @@ export class Layer2DEngine {
     };
 
     const ext = pack.texExt || "webp";
-    const total = (pack.layers || []).length + Object.keys((pack.expr && pack.expr.pieces) || {}).length;
+    const styleLayersAll = Object.values(pack.hairStyles || {}).flatMap((st) => (st && st.layers) || []);
+    const allLoadLayers = [];
+    const seenLoadIds = new Set();
+    for (const L of [...(pack.layers || []), ...styleLayersAll]) {
+      if (!L || seenLoadIds.has(L.id)) continue;
+      seenLoadIds.add(L.id);
+      allLoadLayers.push(L);
+    }
+    const total = allLoadLayers.length + Object.keys((pack.expr && pack.expr.pieces) || {}).length;
     let done = 0;
 
-    await Promise.all((pack.layers || []).map(async (L) => {
+    await Promise.all(allLoadLayers.map(async (L) => {
       const candidates = [`tex/${L.id}.${ext}`, `tex/${L.id}.webp`, `tex/${L.id}.png`];
       let im = null;
       for (const c of candidates) {
@@ -302,7 +310,8 @@ export class Layer2DEngine {
     this._sceneGraph = hasSceneGraph(P) ? buildSceneGraph(P) : null;
     this.restKey0 = this.keyAt(0);
 
-    for (const L of P.layers) {
+    const styleLayersAll = Object.values(P.hairStyles || {}).flatMap((st) => (st && st.layers) || []);
+    for (const L of [...P.layers, ...styleLayersAll]) {
       if (L.kind === 0 && L.head && !L.pitchGroup) {
         L.pitchGroup = (P.pitchGroups && P.pitchGroups[L.id]) || "face";
       }
@@ -364,9 +373,9 @@ export class Layer2DEngine {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
-    // Rebuild clipFbo + topological order (every layer referenced by clip, behind, or outfit clipMask needs an FBO!)
+    // Rebuild clipFbo + topological order (every layer referenced by clip, behind, hairStyles, or outfit clipMask needs an FBO!)
     const neededClip = new Set();
-    for (const L of P.layers) {
+    for (const L of [...P.layers, ...styleLayersAll]) {
       if (L.clipTarget) neededClip.add(L.id);
       if (L.clip) neededClip.add(L.clip);
       if (Array.isArray(L.behind)) { for (const b of L.behind) if (b) neededClip.add(b); }
@@ -428,7 +437,7 @@ export class Layer2DEngine {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
     this.clipOrder = [];
-    const byId = Object.fromEntries(P.layers.map((l) => [l.id, l]));
+    const byId = Object.fromEntries([...P.layers, ...styleLayersAll].map((l) => [l.id, l]));
     const visited = new Set(), visiting = new Set();
     const visit = (id) => {
       if (visited.has(id) || visiting.has(id) || !this.clipFbo[id]) return;
@@ -1499,6 +1508,66 @@ export class Layer2DEngine {
       this.lastFrame = { m, key, fc, exactIdx, exactPitchIdx };
     }
     const eyes = this._eyeState(fc.eyes, fc.gaze);
+
+    // Optional hairStyle / variant splice (non-destructive: P.layers & P.samples stay pristine for .l2d export!)
+    let drawLayers = P.layers;
+    let drawKeyLayers = key.layers;
+    let drawLidx = P.lidx;
+    const styleHide = new Set();
+    const activeStyle = params.style && P.hairStyles && P.hairStyles[params.style];
+    if (activeStyle && Array.isArray(activeStyle.layers) && activeStyle.layers.length) {
+      for (const hid of activeStyle.hide || []) styleHide.add(hid);
+      drawLayers = P.layers.slice();
+      drawKeyLayers = key.layers.slice();
+      const S = P.samples || [];
+      let i0 = 0, i1 = 0, sf = 0;
+      if (exactIdx !== null && exactIdx >= 0 && exactIdx < S.length) {
+        i0 = i1 = exactIdx;
+      } else if (S.length) {
+        const turn = P.head.turn;
+        const ang = m.a < 0 ? -m.a * turn.R : m.a * turn.L;
+        while (i0 + 1 < S.length && S[i0 + 1].angle < ang) i0++;
+        i1 = Math.min(i0 + 1, S.length - 1);
+        sf = S[i1].angle === S[i0].angle ? 0 : clamp((ang - S[i0].angle) / (S[i1].angle - S[i0].angle), 0, 1);
+      }
+      const stSamples = activeStyle.samples || [];
+      activeStyle.layers.forEach((SL, j) => {
+        const anchorId = SL.before || SL.after;
+        let idx = anchorId ? drawLayers.findIndex((l) => l.id === anchorId) : -1;
+        idx = idx >= 0 ? idx + (SL.after ? 1 : 0) : drawLayers.length;
+        const p0 = stSamples[i0] && stSamples[i0][j];
+        const p1 = (stSamples[i1] && stSamples[i1][j]) || p0;
+        let sl;
+        if (!p0) {
+          sl = { A: [1, 0, 0, 1], t: [0, 0], op: 1, turn: 0, behind: 0, hole: 0, wipe: 1, cut: 0, D: null, F: null };
+        } else if (i0 === i1 || sf <= 1e-6) {
+          sl = {
+            ...p0,
+            A: p0.A ? p0.A.slice() : [1, 0, 0, 1],
+            t: p0.t ? [p0.t[0], p0.t[1]] : [0, 0],
+            D: p0.D ? p0.D.slice() : null,
+            F: p0.F ? p0.F.slice() : null,
+          };
+        } else {
+          sl = {
+            A: lerpArr(p0.A, p1.A, sf),
+            t: lerpArr(p0.t, p1.t, sf),
+            op: lerp(p0.op, p1.op, sf),
+            turn: lerp(p0.turn || 0, p1.turn || 0, sf),
+            behind: lerp(p0.behind || 0, p1.behind || 0, sf),
+            hole: lerp(p0.hole || 0, p1.hole || 0, sf),
+            wipe: lerp(p0.wipe ?? 1, p1.wipe ?? 1, sf),
+            cut: lerp(p0.cut || 0, p1.cut || 0, sf),
+            D: lerpGrids(p0.D, p1.D, sf),
+            F: lerpGrids(p0.F, p1.F, sf),
+          };
+        }
+        drawLayers.splice(idx, 0, SL);
+        drawKeyLayers.splice(idx, 0, sl);
+      });
+      drawLidx = Object.fromEntries(drawLayers.map((l, k) => [l.id, k]));
+    }
+
     const after = { ...fc.after };
     if (fc.useKeyMouth && this.km && fc.keyMouthLayer) {
       const nowSec = performance.now() / 1000;
@@ -1517,7 +1586,7 @@ export class Layer2DEngine {
     }
     for (const s of ["R", "L"]) {
       const id = "E09" + s, b = "E05" + s;
-      if (eyes[s] && eyes[s].fade > 0 && P.expr.pieces && P.expr.pieces[id] && !fc.hide.has(b)) {
+      if (eyes[s] && eyes[s].fade > 0 && P.expr.pieces && P.expr.pieces[id] && !fc.hide.has(b) && !styleHide.has(b)) {
         (after[b] = [...(after[b] || [])]).push({ id, ...P.expr.pieces[id], op: Math.min(1, 2 * eyes[s].fade) });
       }
     }
@@ -1540,13 +1609,14 @@ export class Layer2DEngine {
     const isVisible = (id) => {
       if (soloId && id !== soloId) return false;
       if (hiddenIds && hiddenIds.has(id)) return false;
+      if (styleHide.has(id)) return false;
       if (fc.hide.has(id)) return false;
       if (sleeveOp[id] === 0) return false;
       return true;
     };
 
     const drawLayer = (i, alphaOnly, move, piece, useOutfitClip = false) => {
-      const L = P.layers[i], k = key.layers[i];
+      const L = drawLayers[i], k = drawKeyLayers[i];
       if (!L || !k) return false;
       const tid = piece ? "expr_" + piece.id : L.id;
       const texObj = (piece && piece.id === "__keymouth__" && this.km) ? this.km.outTex : this.tex[tid];
@@ -1814,9 +1884,9 @@ export class Layer2DEngine {
       gl.viewport(0, 0, W, H);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
-      const clipVis = isVisible(id) || (outfitClipActive.has(id) && !(soloId && id !== soloId) && !(hiddenIds && hiddenIds.has(id)) && !fc.hide.has(id));
+      const clipVis = isVisible(id) || (outfitClipActive.has(id) && !(soloId && id !== soloId) && !(hiddenIds && hiddenIds.has(id)) && !styleHide.has(id) && !fc.hide.has(id));
       if (clipVis) {
-        const idx = P.lidx[id];
+        const idx = drawLidx[id];
         if (idx !== undefined) drawLayer(idx, true, fc.move[id], null);
       }
     }
@@ -1836,7 +1906,7 @@ export class Layer2DEngine {
         let drawn = 0;
         for (const cid of sh.casters || []) {
           if (!isVisible(cid)) continue;
-          const idx = P.lidx[cid];
+          const idx = drawLidx[cid];
           if (idx !== undefined && drawLayer(idx, true, fc.move[cid], null, true)) drawn++;
         }
         if (!drawn) { shadowActive[si] = false; continue; }
@@ -1851,7 +1921,7 @@ export class Layer2DEngine {
           let rdrawn = 0;
           for (const rid of rlist) {
             if (!isVisible(rid)) continue;
-            const idx = P.lidx[rid];
+            const idx = drawLidx[rid];
             if (idx !== undefined && drawLayer(idx, true, fc.move[rid], null, true)) rdrawn++;
           }
           if (!rdrawn) { shadowActive[si] = false; continue; }
@@ -1898,19 +1968,21 @@ export class Layer2DEngine {
     const over = fc.over || {};
     const overAt = Object.create(null);
     for (const [lid, at] of Object.entries(over)) {
-      const idx = P.lidx[lid];
+      const idx = drawLidx[lid];
       if (idx !== undefined) (overAt[at] ||= []).push(idx);
     }
 
-    for (let i = 0; i < P.layers.length; i++) {
-      const id = P.layers[i].id;
+    for (let i = 0; i < drawLayers.length; i++) {
+      const id = drawLayers[i].id;
       if (!over[id] && isVisible(id)) drawLayer(i, false, fc.move[id], null);
-      for (const pc of after[id] || []) {
-        const j = pc.at ? P.lidx[pc.base] : i;
-        if (j !== undefined) drawLayer(j, false, fc.move[pc.base], pc);
+      if (!styleHide.has(id)) {
+        for (const pc of after[id] || []) {
+          const j = pc.at ? drawLidx[pc.base] : i;
+          if (j !== undefined && !styleHide.has(pc.base)) drawLayer(j, false, fc.move[pc.base], pc);
+        }
       }
       for (const j of overAt[id] || []) {
-        if (isVisible(P.layers[j].id)) drawLayer(j, false, fc.move[P.layers[j].id], null);
+        if (isVisible(drawLayers[j].id)) drawLayer(j, false, fc.move[drawLayers[j].id], null);
       }
       for (const [si, sh] of shadowsAfter[id] || []) drawShadow(si, sh);
     }
