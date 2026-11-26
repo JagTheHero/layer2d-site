@@ -809,4 +809,50 @@ void main() {
   oCol = uAlphaOnly == 1 ? vec4(c.a) : c;
 }`;
 
+// Real-time Layer2D cast-shadow projection shader (projects caster alpha FBO onto receiver layer(s) underneath!)
+export const SHADOW_VS = `#version 300 es
+in vec2 aPos; out vec2 vUv;
+void main() {
+  vUv = aPos;
+  gl_Position = vec4(aPos * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+export const SHADOW_FS = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 oCol;
+uniform sampler2D uCaster, uRecv;
+uniform vec2 uOffsetUv, uBlurUv;
+uniform vec3 uColor;
+uniform float uOpacity, uSharp;
+float tapShadow(vec2 p) {
+  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 0.0;
+  return texture(uCaster, p).a;
+}
+void main() {
+  float recvA = texture(uRecv, vUv).a;
+  if (recvA <= 0.002) discard;
+  vec2 base = vUv + uOffsetUv;
+  float sh = tapShadow(base);
+  if (uBlurUv.x > 1e-5 || uBlurUv.y > 1e-5) {
+    float acc = sh * 0.28;
+    acc += tapShadow(base + vec2( uBlurUv.x,  0.0)) * 0.10;
+    acc += tapShadow(base + vec2(-uBlurUv.x,  0.0)) * 0.10;
+    acc += tapShadow(base + vec2( 0.0,  uBlurUv.y)) * 0.10;
+    acc += tapShadow(base + vec2( 0.0, -uBlurUv.y)) * 0.10;
+    vec2 d = uBlurUv * 0.7071;
+    acc += tapShadow(base + vec2( d.x,  d.y)) * 0.08;
+    acc += tapShadow(base + vec2(-d.x,  d.y)) * 0.08;
+    acc += tapShadow(base + vec2( d.x, -d.y)) * 0.08;
+    acc += tapShadow(base + vec2(-d.x, -d.y)) * 0.08;
+    sh = acc;
+  }
+  if (uSharp > 0.0) {
+    float hw = max(0.02, 0.5 * (1.0 - clamp(uSharp, 0.0, 0.96)));
+    sh = smoothstep(0.5 - hw, 0.5 + hw, sh);
+  }
+  float m = clamp(sh * recvA * uOpacity, 0.0, 1.0);
+  if (m <= 0.001) discard;
+  oCol = vec4(uColor * m, m);
+}`;
+
 const $ = (id) => document.getElementById(id);
