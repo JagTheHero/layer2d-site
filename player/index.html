@@ -2399,6 +2399,8 @@ function draw(f) {
       faceName: fc.faceName,
       faceMap: kmCfg && kmCfg.faceMap,
       sharp: kmCfg && kmCfg.sharp,
+      yaw: f.a || 0,
+      turnCrush: kmCfg && kmCfg.turnCrush,
       probs: kmProbs,
       open: kmOpen,
       volume: kmProbs ? kmVol : f.kmVol,

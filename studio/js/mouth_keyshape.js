@@ -433,6 +433,26 @@
       const viewCx = S.ref.cx;
       const viewCy = S.ref.cy + (OUT_H * 0.5 - OUT_CY) / scaleToOut;
 
+      // Head-turn perspective crush: smoothly compresses mouth keypoints approaching the far cheek edge
+      // so wide expressions/phonemes narrow naturally around the turned jaw without crowding the cheek silhouette.
+      const yaw = clamp((input && typeof input.yaw === "number") ? input.yaw : 0, -1, 1);
+      const ay = Math.abs(yaw);
+      const tcRaw = input && input.turnCrush;
+      const tcOn = tcRaw !== false && ay > 1e-4;
+      const tcCfg = (tcRaw && typeof tcRaw === "object") ? tcRaw : null;
+      const farCap = (tcCfg && typeof tcCfg.farCap === "number") ? tcCfg.farCap : 0.23;
+      const farMinSlope = (tcCfg && typeof tcCfg.farMinSlope === "number") ? tcCfg.farMinSlope : 0.05;
+      const centerScale = (tcCfg && typeof tcCfg.centerScale === "number") ? tcCfg.centerScale : 0.88;
+      const nearScale = (tcCfg && typeof tcCfg.nearScale === "number") ? tcCfg.nearScale : 0.86;
+      const edgePinch = (tcCfg && typeof tcCfg.edgePinch === "number") ? tcCfg.edgePinch : 0.24;
+      const shiftAway = (tcCfg && typeof tcCfg.shiftAway === "number") ? tcCfg.shiftAway : 0.0;
+      const sgnYaw = yaw < 0 ? -1 : 1; // -1 = looking viewer-left (far cheek is -x), +1 = looking viewer-right (+x)
+      const refCx = S.ref.cx;
+      const refW = Math.max(1, S.ref.w);
+      const capPx = Math.max(4, farCap * refW);
+      const s0 = lerp(1.0, centerScale, ay);
+      const shiftPx = shiftAway * refW * ay * sgnYaw;
+
       gl.bindFramebuffer(gl.FRAMEBUFFER, outFbo);
       gl.viewport(0, 0, OUT_W, OUT_H);
       gl.clearColor(0, 0, 0, 0);
@@ -453,9 +473,30 @@
           const ff = u * (N - 1);
           const i0 = Math.min(Math.floor(ff), N - 2);
           const t = ff - i0;
-          const x = q.uu[c] < 0 ? cur.xa - PADX : q.uu[c] > 1 ? cur.xb + PADX : cur.xa + (cur.xb - cur.xa) * u;
-          const Uy = lerp(cur.U[i0], cur.U[i0 + 1], t);
-          const Ly = Math.max(lerp(cur.Lo[i0], cur.Lo[i0 + 1], t), Uy + 1);
+          let x = q.uu[c] < 0 ? cur.xa - PADX : q.uu[c] > 1 ? cur.xb + PADX : cur.xa + (cur.xb - cur.xa) * u;
+          let Uy = lerp(cur.U[i0], cur.U[i0 + 1], t);
+          let Ly = Math.max(lerp(cur.Lo[i0], cur.Lo[i0 + 1], t), Uy + 1);
+          if (tcOn) {
+            const dxFar = (x - refCx) * sgnYaw;
+            let outFar, crushAmt = 0;
+            if (dxFar >= 0) {
+              // Strictly monotonic C2 cheek-edge crush: narrow mouths stay natural, wide corners crush cleanly!
+              const th = capPx * Math.tanh(dxFar / capPx);
+              const farTarget = s0 * (th * (1 - farMinSlope) + dxFar * farMinSlope);
+              outFar = lerp(dxFar, farTarget, ay);
+              if (dxFar > 1e-3) crushAmt = clamp(1 - (outFar / dxFar) / Math.max(0.05, s0), 0, 1) * ay;
+            } else {
+              const nearTarget = lerp(s0, nearScale, clamp(-dxFar / (0.5 * refW), 0, 1)) * dxFar;
+              outFar = lerp(dxFar, nearTarget, ay);
+            }
+            x = refCx + outFar * sgnYaw - shiftPx;
+            if (edgePinch > 0 && crushAmt > 1e-4 && Ly > Uy + 1.5) {
+              const midY = 0.5 * (Uy + Ly);
+              const halfOpen = 0.5 * (Ly - Uy) * (1 - edgePinch * crushAmt);
+              Uy = midY - halfOpen;
+              Ly = Math.max(midY + halfOpen, Uy + 1);
+            }
+          }
           const swBand = Math.min(STROKE, (Ly - Uy) / 2);
           const ys = [Uy - PADY, Uy, Uy + swBand, (Uy + Ly) / 2, Ly - swBand, Ly, Ly + PADY];
           for (let r = 0; r < MR; r++) {

@@ -1580,6 +1580,8 @@ export class Layer2DEngine {
         faceName: fc.faceName,
         faceMap: kmCfg && kmCfg.faceMap,
         sharp: kmCfg && kmCfg.sharp,
+        yaw: m.a || 0,
+        turnCrush: kmCfg && kmCfg.turnCrush,
         vowel: params.vowel || null,
         volume: params.micVolume,
       }, kmDt);
